@@ -215,6 +215,10 @@ body::before {
 }
 
 /* ─── FAB (floating action button) ────────────────────────── */
+.fab {
+  display: none; /* mobile-only; shown in the media query below */
+}
+
 @media (max-width: 640px) {
   .fab {
     position: fixed;

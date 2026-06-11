@@ -1,3 +1,5 @@
+import { useId } from 'react'
+
 interface Props {
   count: number
   threshold: number
@@ -5,6 +7,8 @@ interface Props {
 }
 
 export function SigRing ({ count, threshold, size = 72 }: Props) {
+  // SVG gradient ids resolve document-wide; a shared id breaks with many rings
+  const gradId = useId()
   const cx = size / 2
   const cy = size / 2
   const r = size / 2 - 6
@@ -22,7 +26,7 @@ export function SigRing ({ count, threshold, size = 72 }: Props) {
       style={{ display: 'block' }}
     >
       <defs>
-        <linearGradient id="sigGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <linearGradient id={gradId} x1="0%" y1="0%" x2="100%" y2="100%">
           <stop offset="0%" stopColor="#38E0FF" />
           <stop offset="100%" stopColor="#8B5CF6" />
         </linearGradient>
@@ -43,7 +47,7 @@ export function SigRing ({ count, threshold, size = 72 }: Props) {
         cx={cx}
         cy={cy}
         r={r}
-        stroke={complete ? '#3DF0A8' : 'url(#sigGrad)'}
+        stroke={complete ? '#3DF0A8' : `url(#${gradId})`}
         strokeWidth={4}
         fill="none"
         strokeLinecap="round"
