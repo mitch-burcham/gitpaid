@@ -33,16 +33,13 @@ export function CrowdProvider ({ children }: { children: ReactNode }) {
   // becoming stale closures.
   const ownKeyRef = useRef('')
 
-  // Guard against double-run under StrictMode.
-  const initiated = useRef(false)
-
   // Keep cleanup fn from listenLive so we can call it on unmount.
   const cleanupRef = useRef<(() => Promise<void>) | null>(null)
 
+  // Re-runs on every mount (StrictMode remounts included) so the live
+  // subscription is always re-established; the cancelled flag plus an
+  // idempotent reducer make a double init harmless.
   useEffect(() => {
-    if (initiated.current) return
-    initiated.current = true
-
     let cancelled = false
 
     async function init (): Promise<void> {
