@@ -35,7 +35,7 @@ Sighash: `SIGHASH_ALL | SIGHASH_FORKID`, subscript = full locking script.
 
 ### Coordination via MessageBox
 
-All messages are JSON (auto-encrypted per recipient by `@bsv/message-box-client`), sent fan-out to every participant (originator + all controllers). The host is `https://gmb.bsvblockchain.tech`, box name `crowd`.
+All messages are JSON (auto-encrypted per recipient by `@bsv/message-box-client`), sent fan-out to every participant (originator + all controllers). The host is `https://message-box-us-1.bsvb.tech`, box name `crowd`.
 
 | Message type  | Purpose |
 |---------------|---------|

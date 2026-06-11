@@ -1,6 +1,6 @@
 export type PubKeyHex = string
 export const CROWD_BOX = 'crowd'
-export const MESSAGEBOX_HOST = 'https://gmb.bsvblockchain.tech'
+export const MESSAGEBOX_HOST = 'https://message-box-us-1.bsvb.tech'
 export const MULTISIG_PROTOCOL: [1, string] = [1, 'multi sig brc29']
 export const BRC29_PROTOCOL: [2, string] = [2, '3241645161d8']
 
