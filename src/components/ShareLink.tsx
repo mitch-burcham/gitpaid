@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { encodeInvite } from '../lib/protocol'
 import type { InviteMsg } from '../lib/protocol'
 
@@ -7,17 +7,44 @@ interface Props {
 }
 
 export function ShareLink ({ invite }: Props) {
-  const [copied, setCopied] = useState(false)
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const urlRef = useRef<HTMLSpanElement>(null)
 
   const url = `${location.origin}${location.pathname}#/e/${invite.escrowId}?d=${encodeInvite(invite)}`
 
+  function execCommandFallback (): boolean {
+    try {
+      const ta = document.createElement('textarea')
+      ta.value = url
+      ta.style.position = 'fixed'
+      ta.style.top = '-9999px'
+      ta.style.left = '-9999px'
+      document.body.appendChild(ta)
+      ta.focus()
+      ta.select()
+      const ok = document.execCommand('copy')
+      document.body.removeChild(ta)
+      return ok
+    } catch {
+      return false
+    }
+  }
+
   function handleCopy () {
-    navigator.clipboard.writeText(url).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    }).catch(() => {
-      // fallback: select the text
-    })
+    const doResult = (success: boolean) => {
+      setCopyState(success ? 'copied' : 'failed')
+      setTimeout(() => setCopyState('idle'), 2000)
+    }
+
+    if (typeof navigator.clipboard !== 'undefined') {
+      navigator.clipboard.writeText(url).then(() => {
+        doResult(true)
+      }).catch(() => {
+        doResult(execCommandFallback())
+      })
+    } else {
+      doResult(execCommandFallback())
+    }
   }
 
   function handleShare () {
@@ -36,6 +63,7 @@ export function ShareLink ({ invite }: Props) {
       }}
     >
       <span
+        ref={urlRef}
         style={{
           fontFamily: 'monospace',
           fontSize: 12,
@@ -57,7 +85,7 @@ export function ShareLink ({ invite }: Props) {
           onClick={handleCopy}
           style={{ minHeight: 36, padding: '0 14px', fontSize: 13 }}
         >
-          {copied ? 'Copied ✓' : 'Copy'}
+          {copyState === 'copied' ? 'Copied ✓' : copyState === 'failed' ? 'Copy failed' : 'Copy'}
         </button>
 
         {typeof navigator.share === 'function' && (

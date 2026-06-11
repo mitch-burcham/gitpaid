@@ -290,8 +290,10 @@ body::before {
   }
 }
 
-/* ─── IdentityPicker row hover ─────────────────────────────── */
+/* ─── IdentityPicker row hover / active ────────────────────── */
 .ip-row:hover,
-button.ip-row:hover {
+button.ip-row:hover,
+.ip-row-active,
+button.ip-row-active {
   background: rgba(148, 184, 255, 0.06) !important;
 }

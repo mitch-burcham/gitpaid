@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useCrowd } from '../hooks/useCrowd'
 import { createEscrow } from '../lib/escrow'
@@ -23,6 +23,7 @@ export function CreateEscrow () {
   const [satoshisInput, setSatoshisInput] = useState('')
   const [others, setOthers] = useState<DisplayableIdentity[]>([])
   const [threshold, setThreshold] = useState(1) // will track M automatically
+  const prevMRef = useRef(1) // tracks the M value from the last controllers change
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<{
@@ -49,11 +50,19 @@ export function CreateEscrow () {
     setThreshold(t => Math.max(1, Math.min(t + delta, M)))
   }
 
-  // Keep threshold synced when M changes
+  // Keep threshold synced when M changes.
+  // If user hadn't deliberately lowered threshold below M, track M upward.
   function handleOthersChange (sel: DisplayableIdentity[]) {
-    setOthers(sel)
+    const prevM = prevMRef.current
     const newM = 1 + sel.length
-    setThreshold(t => Math.max(1, Math.min(t, newM)))
+    prevMRef.current = newM
+    setOthers(sel)
+    setThreshold(t => {
+      // If threshold was tracking M (equalled prev M), keep tracking the new M
+      if (t === prevM) return newM
+      // Otherwise just clamp to valid range
+      return Math.max(1, Math.min(t, newM))
+    })
   }
 
   const handleSubmit = useCallback(async () => {

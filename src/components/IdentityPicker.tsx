@@ -27,14 +27,21 @@ export function IdentityPicker ({ selected, onChange, excludeKeys = [], single =
   const [results, setResults] = useState<DisplayableIdentity[]>([])
   const [searching, setSearching] = useState(false)
   const [open, setOpen] = useState(false)
+  const [activeIndex, setActiveIndex] = useState(-1)
   const containerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const seqRef = useRef(0)
 
   const excludeSet = new Set([
     ...excludeKeys,
     ...selected.map(s => s.identityKey),
   ])
+
+  // Reset active index when results change
+  useEffect(() => {
+    setActiveIndex(-1)
+  }, [results])
 
   // Debounced search
   useEffect(() => {
@@ -61,18 +68,22 @@ export function IdentityPicker ({ selected, onChange, excludeKeys = [], single =
     setOpen(true)
 
     timerRef.current = setTimeout(async () => {
+      const seq = ++seqRef.current
       try {
         const hits = await searchIdentities(trimmed)
+        if (seq !== seqRef.current) return
         setResults(hits.filter(h => !excludeSet.has(h.identityKey)))
       } catch {
+        if (seq !== seqRef.current) return
         setResults([])
       } finally {
-        setSearching(false)
+        if (seq === seqRef.current) setSearching(false)
       }
     }, 300)
 
     return () => {
       if (timerRef.current !== null) clearTimeout(timerRef.current)
+      seqRef.current++
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query])
@@ -122,6 +133,16 @@ export function IdentityPicker ({ selected, onChange, excludeKeys = [], single =
       setOpen(false)
       return
     }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setActiveIndex(i => Math.min(i + 1, results.length - 1))
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setActiveIndex(i => Math.max(i - 1, -1))
+      return
+    }
     if (e.key === 'Enter') {
       e.preventDefault()
       const trimmed = query.trim()
@@ -130,7 +151,8 @@ export function IdentityPicker ({ selected, onChange, excludeKeys = [], single =
         return
       }
       if (results.length > 0) {
-        addIdentity(results[0])
+        const target = activeIndex >= 0 ? results[activeIndex] : results[0]
+        addIdentity(target)
       }
     }
   }
@@ -155,6 +177,10 @@ export function IdentityPicker ({ selected, onChange, excludeKeys = [], single =
           autoComplete="off"
           spellCheck={false}
           style={{ paddingRight: searching ? 40 : 14 }}
+          aria-label="Search identities"
+          role="combobox"
+          aria-expanded={open}
+          aria-autocomplete="list"
         />
         {searching && (
           <span
@@ -175,6 +201,7 @@ export function IdentityPicker ({ selected, onChange, excludeKeys = [], single =
       {open && (
         <div
           className="panel"
+          role="listbox"
           style={{
             position: 'absolute',
             top: 'calc(100% + 6px)',
@@ -210,10 +237,13 @@ export function IdentityPicker ({ selected, onChange, excludeKeys = [], single =
             </div>
           )}
 
-          {results.map(id => (
+          {results.map((id, idx) => (
             <button
               key={id.identityKey}
               type="button"
+              role="option"
+              aria-selected={idx === activeIndex}
+              className={`ip-row${idx === activeIndex ? ' ip-row-active' : ''}`}
               onClick={() => addIdentity(id)}
               style={rowStyle}
             >
