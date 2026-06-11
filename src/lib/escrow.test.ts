@@ -3,7 +3,7 @@ import {
   PrivateKey, Transaction, P2PKH, UnlockingScript,
   BigNumber, ECDSA, TransactionSignature, Utils,
 } from '@bsv/sdk'
-import { CrowdEscrow, SIGHASH_SCOPE } from './CrowdEscrow'
+import { CrowdEscrow, SIGHASH_SCOPE_SINGLE_ACP } from './CrowdEscrow'
 import { escrowLockingScript, proposalTx, verifySignature, readyToFinalize } from './escrow'
 import type { InviteMsg, ProposalMsg } from './protocol'
 import type { EscrowState, ProposalState } from './store'
@@ -53,7 +53,9 @@ const invite: InviteMsg = {
   createdAt: Date.now(),
 }
 
-// Build a proposal transaction (mirrors buildProposal logic)
+// Build a proposal skeleton (mirrors buildProposal logic): escrow input at
+// index 0, recipient output at index 0 paying the FULL escrow amount — the
+// broadcasting wallet adds funding/change later under SIGHASH_SINGLE|ACP.
 const recipientKey = PrivateKey.fromRandom().toPublicKey()
 const proposalTxObj = new Transaction()
 proposalTxObj.addInput({
@@ -64,7 +66,7 @@ proposalTxObj.addInput({
 })
 proposalTxObj.addOutput({
   lockingScript: new P2PKH().lock(recipientKey.toAddress()),
-  satoshis: 900,
+  satoshis: SATOSHIS,
 })
 const proposalRawTx = proposalTxObj.toHex()
 const proposalId = proposalTxObj.id('hex')
@@ -83,10 +85,10 @@ const proposal: ProposalMsg = {
 function makeSignature (privKey: PrivateKey, inv: InviteMsg, prop: ProposalMsg): string {
   const tx = proposalTx(inv, prop)
   const lockScript = escrowLockingScript(inv)
-  const hashBytes = CrowdEscrow.sighash(tx, 0, lockScript, inv.satoshis)
+  const hashBytes = CrowdEscrow.sighash(tx, 0, lockScript, inv.satoshis, SIGHASH_SCOPE_SINGLE_ACP)
   const bn = new BigNumber(hashBytes)
   const sig = ECDSA.sign(bn, privKey, true)
-  const txSig = new TransactionSignature(sig.r, sig.s, SIGHASH_SCOPE)
+  const txSig = new TransactionSignature(sig.r, sig.s, SIGHASH_SCOPE_SINGLE_ACP)
   return Utils.toHex(txSig.toChecksigFormat())
 }
 
@@ -181,5 +183,63 @@ describe('readyToFinalize', () => {
   it('returns false when proposal does not exist in state', () => {
     const es = makeEscrowState([0, 2])
     expect(readyToFinalize(invite, es, 'nonexistent-id')).toBe(false)
+  })
+})
+
+describe('SIGHASH_SINGLE|ANYONECANPAY broadcaster extension', () => {
+  it('skeleton signatures remain valid after the broadcaster adds funding input and change output', async () => {
+    const { Spend, LockingScript } = await import('@bsv/sdk')
+
+    // Sign the skeleton with controllers 0 and 2
+    const sig0 = Utils.toArray(makeSignature(controllerKeys[0], invite, proposal), 'hex')
+    const sig2 = Utils.toArray(makeSignature(controllerKeys[2], invite, proposal), 'hex')
+    const unlock = CrowdEscrow.unlockMultisig([sig0, sig2], controllerPubs)
+
+    // Broadcaster extends the tx: extra funding input at index 1, change output at index 1
+    const fundingKey = PrivateKey.fromRandom()
+    const broadcasterFundingTx = new Transaction()
+    broadcasterFundingTx.addOutput({
+      lockingScript: new P2PKH().lock(fundingKey.toPublicKey().toAddress()),
+      satoshis: 500,
+    })
+    const extended = Transaction.fromHex(proposal.rawTx)
+    extended.inputs[0].sourceTransaction = fundingTx
+    extended.addInput({
+      sourceTransaction: broadcasterFundingTx,
+      sourceOutputIndex: 0,
+      unlockingScript: new UnlockingScript(),
+      sequence: 0xffffffff,
+    })
+    extended.addOutput({
+      lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toPublicKey().toAddress()),
+      satoshis: 450, // broadcaster's change; 50 sats fee
+    })
+
+    // Escrow input 0 must validate in the EXTENDED context
+    const spend = new Spend({
+      sourceTXID: fundingTxid,
+      sourceOutputIndex: 0,
+      sourceSatoshis: SATOSHIS,
+      lockingScript: LockingScript.fromHex(lock.toHex()),
+      transactionVersion: extended.version,
+      otherInputs: [extended.inputs[1]],
+      inputIndex: 0,
+      unlockingScript: unlock,
+      inputSequence: 0xffffffff,
+      outputs: extended.outputs,
+      lockTime: extended.lockTime,
+    })
+    expect(spend.validate()).toBe(true)
+  })
+
+  it('verifySignature rejects a signature with the wrong sighash flag (SIGHASH_ALL)', () => {
+    const tx = proposalTx(invite, proposal)
+    const lockScript = escrowLockingScript(invite)
+    const SIGHASH_ALL_FORKID = TransactionSignature.SIGHASH_ALL | TransactionSignature.SIGHASH_FORKID
+    const hashBytes = CrowdEscrow.sighash(tx, 0, lockScript, invite.satoshis, SIGHASH_ALL_FORKID)
+    const sig = ECDSA.sign(new BigNumber(hashBytes), controllerKeys[1], true)
+    const txSig = new TransactionSignature(sig.r, sig.s, SIGHASH_ALL_FORKID)
+    const sigHex = Utils.toHex(txSig.toChecksigFormat())
+    expect(verifySignature(invite, proposal, invite.controllers[1], sigHex)).toBe(false)
   })
 })

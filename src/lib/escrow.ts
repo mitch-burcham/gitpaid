@@ -1,6 +1,7 @@
 import {
   Transaction,
   LockingScript,
+  UnlockingScript,
   PublicKey,
   Signature,
   BigNumber,
@@ -13,7 +14,7 @@ import {
 import type { InviteMsg, ProposalMsg } from './protocol'
 import { MULTISIG_PROTOCOL, BRC29_PROTOCOL } from './protocol'
 import type { EscrowState } from './store'
-import { CrowdEscrow } from './CrowdEscrow'
+import { CrowdEscrow, SIGHASH_SCOPE_SINGLE_ACP } from './CrowdEscrow'
 import { wallet, getOwnIdentityKey } from './wallet'
 
 // ---------------------------------------------------------------------------
@@ -38,24 +39,8 @@ export interface BuildProposalParams {
 // Pure helpers — no wallet required
 // ---------------------------------------------------------------------------
 
-/** Network fee rate for proposal transactions. */
-export const FEE_PER_KB = 100
-
 /**
- * Pure: fee for a proposal spend at FEE_PER_KB, from the estimated final size
- * (base tx + multisig unlocking script + one P2PKH output).
- */
-export function estimateProposalFee (invite: InviteMsg): number {
-  const txSizeEstimate =
-    10 + 40 +
-    CrowdEscrow.estimateMultisigUnlockLength(invite.threshold, invite.pubkeys.length) +
-    34
-  return Math.max(1, Math.ceil((txSizeEstimate / 1000) * FEE_PER_KB))
-}
-
-/**
- * Pure: index of the escrow input in a proposal transaction. The wallet that
- * builds the draft may add its own funding inputs, so never assume index 0.
+ * Pure: index of the escrow input in a proposal transaction.
  */
 export function escrowInputIndex (invite: InviteMsg, tx: Transaction): number {
   const [escrowTxid, voutStr] = invite.escrowId.split('.')
@@ -107,9 +92,14 @@ export function verifySignature (
     const der = bytes.slice(0, bytes.length - 1)
     const sig = Signature.fromDER(der)
 
+    // Require the SIGHASH_SINGLE|ANYONECANPAY|FORKID flag the protocol expects
+    if (bytes[bytes.length - 1] !== SIGHASH_SCOPE_SINGLE_ACP) return false
+
     const tx = proposalTx(invite, proposal)
     const lockScript = escrowLockingScript(invite)
-    const hash = CrowdEscrow.sighash(tx, escrowInputIndex(invite, tx), lockScript, invite.satoshis)
+    const hash = CrowdEscrow.sighash(
+      tx, escrowInputIndex(invite, tx), lockScript, invite.satoshis, SIGHASH_SCOPE_SINGLE_ACP,
+    )
 
     const pubKey = PublicKey.fromString(invite.pubkeys[idx])
     // ECDSA.verify expects (BigNumber, Signature, Point) — PublicKey extends Point
@@ -236,48 +226,24 @@ export async function createEscrow (p: CreateEscrowParams): Promise<InviteMsg> {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Proposer-local signAction references. The wallet that drafts a proposal via
-// createAction holds the signing session; only that device can broadcast.
-// ---------------------------------------------------------------------------
-
-function refStorageKey (proposalId: string): string {
-  return `crowd:ref:${proposalId}`
-}
-
-function saveProposalRef (proposalId: string, reference: string): void {
-  if (typeof localStorage === 'undefined') return
-  localStorage.setItem(refStorageKey(proposalId), reference)
-}
-
-function loadProposalRef (proposalId: string): string | undefined {
-  if (typeof localStorage === 'undefined') return undefined
-  return localStorage.getItem(refStorageKey(proposalId)) ?? undefined
-}
-
-/** True when this device drafted the proposal and can broadcast it. */
-export function hasProposalRef (proposalId: string): boolean {
-  return loadProposalRef(proposalId) !== undefined
-}
-
 /**
  * Build a spending proposal from an existing escrow invite.
  *
- * The DRAFT TRANSACTION IS BUILT BY THE WALLET (createAction with a deferred
- * unlocking script): the wallet applies its own fee model and may add a change
- * output back to the proposer. Everyone then signs the wallet's exact
- * transaction, so signAction's script verification sees the same sighash the
- * signatures committed to. A client-side rebuild can't guarantee that.
+ * The proposal is a SKELETON transaction: the escrow input at index 0 and the
+ * recipient output at index 0, paying the FULL escrow amount. Controllers sign
+ * it with SIGHASH_SINGLE|ANYONECANPAY, which commits only to that input/output
+ * pair — the wallet that eventually broadcasts adds its own funding inputs
+ * (covering the network fee) and change outputs at higher indices.
  */
 export async function buildProposal (p: BuildProposalParams): Promise<ProposalMsg> {
   const { invite, note } = p
   const ownKey = await getOwnIdentityKey()
 
-  const fee = estimateProposalFee(invite)
-  const outputSatoshis = invite.satoshis - fee
+  const fundingTx = Transaction.fromAtomicBEEF(Utils.toArray(invite.beef, 'hex'))
+  const vout = Number(invite.escrowId.split('.')[1])
 
   let recipient: ProposalMsg['recipient']
-  let recipientLock: string
+  let recipientLock: LockingScript
 
   if (p.recipientIdentityKey !== undefined) {
     // BRC-29 payment derivation
@@ -289,54 +255,35 @@ export async function buildProposal (p: BuildProposalParams): Promise<ProposalMs
       counterparty: p.recipientIdentityKey,
     })
     const derivedPub = PublicKey.fromString(derivedResult.publicKey)
-    recipientLock = new P2PKH().lock(derivedPub.toAddress()).toHex()
+    recipientLock = new P2PKH().lock(derivedPub.toAddress())
     recipient = {
       identityKey: p.recipientIdentityKey,
       derivationPrefix,
       derivationSuffix,
     }
   } else if (p.recipientAddress !== undefined) {
-    recipientLock = new P2PKH().lock(p.recipientAddress).toHex()
+    recipientLock = new P2PKH().lock(p.recipientAddress)
   } else {
     throw new Error('buildProposal: must provide recipientIdentityKey or recipientAddress')
   }
 
-  const result = await wallet.createAction({
-    description: 'Propose crowd escrow transfer',
-    inputBEEF: Utils.toArray(invite.beef, 'hex'),
-    inputs: [
-      {
-        outpoint: invite.escrowId,
-        inputDescription: 'Escrow multisig spend',
-        unlockingScriptLength:
-          CrowdEscrow.estimateMultisigUnlockLength(invite.threshold, invite.pubkeys.length),
-      },
-    ],
-    outputs: [
-      {
-        lockingScript: recipientLock,
-        satoshis: outputSatoshis,
-        outputDescription: 'Escrow transfer',
-      },
-    ],
-    options: { signAndProcess: false, randomizeOutputs: false },
+  const tx = new Transaction()
+  tx.addInput({
+    sourceTransaction: fundingTx,
+    sourceOutputIndex: vout,
+    unlockingScript: new UnlockingScript(),
+    sequence: 0xffffffff,
   })
-
-  const signable = result.signableTransaction
-  if (signable == null) {
-    throw new Error('buildProposal: wallet did not return a signable transaction')
-  }
-
-  const tx = Transaction.fromAtomicBEEF(signable.tx)
-  const proposalId = tx.id('hex')
-  const rawTx = tx.toHex()
-  saveProposalRef(proposalId, signable.reference)
+  tx.addOutput({
+    lockingScript: recipientLock,
+    satoshis: invite.satoshis,
+  })
 
   return {
     type: 'proposal',
     escrowId: invite.escrowId,
-    proposalId,
-    rawTx,
+    proposalId: tx.id('hex'),
+    rawTx: tx.toHex(),
     note,
     proposer: ownKey,
     ...(recipient !== undefined ? { recipient } : {}),
@@ -351,7 +298,9 @@ export async function signProposal (invite: InviteMsg, proposal: ProposalMsg): P
   const ownKey = await getOwnIdentityKey()
   const tx = proposalTx(invite, proposal)
   const lockScript = escrowLockingScript(invite)
-  const hash = CrowdEscrow.sighash(tx, escrowInputIndex(invite, tx), lockScript, invite.satoshis)
+  const hash = CrowdEscrow.sighash(
+    tx, escrowInputIndex(invite, tx), lockScript, invite.satoshis, SIGHASH_SCOPE_SINGLE_ACP,
+  )
 
   const sigResult = await wallet.createSignature({
     hashToDirectlySign: hash,
@@ -362,7 +311,7 @@ export async function signProposal (invite: InviteMsg, proposal: ProposalMsg): P
     counterparty: ownKey === invite.originator ? 'self' : invite.originator,
   })
 
-  return Utils.toHex(CrowdEscrow.toChecksigFormat(sigResult.signature))
+  return Utils.toHex(CrowdEscrow.toChecksigFormat(sigResult.signature, SIGHASH_SCOPE_SINGLE_ACP))
 }
 
 /**
@@ -395,24 +344,34 @@ export async function finalizeProposal (
   const pubKeyObjects = invite.pubkeys.map(p => PublicKey.fromString(p))
   const unlockScript = CrowdEscrow.unlockMultisig(orderedSigs, pubKeyObjects)
 
-  // Broadcast through the wallet via the signing session opened when the
-  // proposal was drafted (createAction with signAndProcess: false). Only the
-  // proposer's device holds the reference — the wallet completes its own
-  // transaction, so the collected signatures match exactly.
-  const reference = loadProposalRef(proposalId)
-  if (reference === undefined) {
-    throw new Error("Only the proposer's device can broadcast this transfer")
-  }
-
+  // Broadcast through this wallet. Signatures are SIGHASH_SINGLE|ANYONECANPAY,
+  // committing only to the escrow input and the output at the same index, so
+  // the wallet is free to add funding inputs (it pays the network fee) and
+  // change outputs at higher indices. The signatures stay valid as long as the
+  // escrow input and recipient output remain paired at index 0 and the
+  // skeleton's version (1), lockTime (0) and sequence (0xffffffff) carry over.
   const tx = proposalTx(invite, ps.proposal)
-  const idx = escrowInputIndex(invite, tx)
+  const recipientOutput = tx.outputs[0]
 
-  const result = await wallet.signAction({
-    spends: {
-      [idx]: { unlockingScript: unlockScript.toHex() },
-    },
-    reference,
-    options: { acceptDelayedBroadcast: false },
+  const result = await wallet.createAction({
+    description: 'Finalize crowd escrow transfer',
+    inputBEEF: Utils.toArray(invite.beef, 'hex'),
+    inputs: [
+      {
+        outpoint: invite.escrowId,
+        inputDescription: 'Escrow multisig spend',
+        unlockingScript: unlockScript.toHex(),
+        sequenceNumber: 0xffffffff,
+      },
+    ],
+    outputs: [
+      {
+        lockingScript: (recipientOutput.lockingScript as LockingScript).toHex(),
+        satoshis: recipientOutput.satoshis ?? invite.satoshis,
+        outputDescription: 'Escrow transfer',
+      },
+    ],
+    options: { randomizeOutputs: false, acceptDelayedBroadcast: false },
   })
 
   if (result.txid !== undefined) return result.txid

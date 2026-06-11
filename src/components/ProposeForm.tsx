@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import { useCrowd } from '../hooks/useCrowd'
-import { buildProposal, signProposal, estimateProposalFee } from '../lib/escrow'
+import { buildProposal, signProposal } from '../lib/escrow'
 import { fanOut } from '../lib/messages'
 import type { InviteMsg, SignatureMsg } from '../lib/protocol'
 import type { DisplayableIdentity } from '../lib/identity'
@@ -27,8 +27,8 @@ export function ProposeForm ({ invite }: Props) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Same fee helper as buildProposal so the preview matches the actual amount
-  const sendSats = invite.satoshis - estimateProposalFee(invite)
+  // Recipient gets the full escrow; the broadcasting wallet covers the fee
+  const sendSats = invite.satoshis
 
   const recipientIdentityKey = mode === 'identity' ? selectedIdentity[0]?.identityKey : undefined
   const recipientAddress = mode === 'address' ? address.trim() : undefined
@@ -194,7 +194,7 @@ export function ProposeForm ({ invite }: Props) {
 
           {/* Amount line */}
           <div style={{ fontSize: 14, color: 'var(--text-dim)', padding: '10px 0', borderTop: '1px solid var(--panel-border)' }}>
-            Sends ~<strong style={{ color: 'var(--text)' }}>{fmtSats(sendSats)}</strong> (full escrow minus network fee)
+            Sends <strong style={{ color: 'var(--text)' }}>{fmtSats(sendSats)}</strong> (network fee paid by the broadcasting wallet)
           </div>
 
           {/* Submit */}

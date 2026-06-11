@@ -18,6 +18,16 @@ function concatPubkeys (pubkeys: PublicKey[]): number[] {
 export const SIGHASH_SCOPE =
   TransactionSignature.SIGHASH_ALL | TransactionSignature.SIGHASH_FORKID
 
+/**
+ * Scope for multisig proposal signatures: commits only to the escrow input
+ * and the output at the same index, so the broadcasting wallet can append its
+ * own funding inputs and change outputs without invalidating signatures.
+ */
+export const SIGHASH_SCOPE_SINGLE_ACP =
+  TransactionSignature.SIGHASH_SINGLE |
+  TransactionSignature.SIGHASH_ANYONECANPAY |
+  TransactionSignature.SIGHASH_FORKID
+
 export class CrowdEscrow {
   /**
    * Locking script: IF n-of-m multisig over hash160(concat pubkeys) ELSE p2pkh(refund key) ENDIF
@@ -136,6 +146,7 @@ export class CrowdEscrow {
     inputIndex: number,
     lockingScript: LockingScript,
     sourceSatoshis: number,
+    scope: number = SIGHASH_SCOPE,
   ): number[] {
     const input = tx.inputs[inputIndex]
     const sourceTXID =
@@ -155,16 +166,16 @@ export class CrowdEscrow {
       inputSequence: input.sequence ?? 0xffffffff,
       subscript: lockingScript,
       lockTime: tx.lockTime,
-      scope: SIGHASH_SCOPE,
+      scope,
     })
 
     return Hash.hash256(preimage)
   }
 
   /** Converts a raw DER signature to checksig format (appends the sighash byte). */
-  static toChecksigFormat (derSig: number[]): number[] {
+  static toChecksigFormat (derSig: number[], scope: number = SIGHASH_SCOPE): number[] {
     const s = Signature.fromDER(derSig)
-    const txSig = new TransactionSignature(s.r, s.s, SIGHASH_SCOPE)
+    const txSig = new TransactionSignature(s.r, s.s, scope)
     return txSig.toChecksigFormat()
   }
 

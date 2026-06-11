@@ -21,8 +21,11 @@ export interface InviteMsg {
 export interface ProposalMsg {
   type: 'proposal'
   escrowId: string
-  proposalId: string          // unsigned tx id (hex)
-  rawTx: string               // unsigned spending tx, hex
+  proposalId: string          // skeleton tx id (hex)
+  // Skeleton spending tx, hex: the escrow input at index 0 and the recipient
+  // output at index 0. Signers commit to it with SIGHASH_SINGLE|ANYONECANPAY,
+  // so the broadcasting wallet may append funding inputs and change outputs.
+  rawTx: string
   note: string
   proposer: PubKeyHex
   recipient?: { identityKey: PubKeyHex, derivationPrefix: string, derivationSuffix: string }

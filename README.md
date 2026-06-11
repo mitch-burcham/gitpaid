@@ -40,7 +40,7 @@ All messages are JSON (auto-encrypted per recipient by `@bsv/message-box-client`
 | Message type  | Purpose |
 |---------------|---------|
 | `invite`      | Escrow created — carries `escrowId` (`txid.vout`), AtomicBEEF of the funding tx, `satoshis`, `threshold`, `keyID`, controller identity keys, derived multisig pubkeys, and the refund PKH. |
-| `proposal`    | Spend draft — carries the unsigned spending transaction (`rawTx` hex), proposed outputs with notes, and optional BRC-29 derivation info for the recipient. |
+| `proposal`    | Spend draft — a skeleton transaction (`rawTx` hex: escrow input + recipient output at index 0, full amount), a note, and optional BRC-29 derivation info for the recipient. Signed with `SIGHASH_SINGLE \| ANYONECANPAY`. |
 | `signature`   | A single controller's checksig-format ECDSA signature over the proposal sighash. |
 | `veto`        | Any controller rejects the proposal (optional reason). UI removes the proposal; no script effect. |
 | `finalized`   | Broadcast succeeded — carries the resulting `txid`. |
@@ -79,7 +79,8 @@ npm test
 - **Finalize races are benign.** If multiple clients observe the threshold simultaneously and each broadcasts, they are all spending the same UTXO: only one will be accepted by the network. The first confirmed broadcast wins; the rest are double-spend failures.
 - **The refund path is originator-only.** The cancel unlocking script requires a signature from the BRC-29 key derived to `counterparty: 'self'` with nonces stored only in the originator's wallet. No other party can produce a valid cancel signature.
 - **Signatures are verified client-side before counting.** `verifySignature` in `escrow.ts` checks each incoming `signature` message against the expected BRC-42 derived public key before including it in the threshold count. Invalid or mis-attributed signatures are silently ignored.
-- **All broadcasting goes through the wallet.** Funding, proposal, finalize, and cancel transactions are submitted via the BRC-100 wallet (`createAction`/`signAction`) — the app never talks to a miner or ARC endpoint directly. The proposer's wallet drafts the spending transaction (`createAction` with `signAndProcess: false`), every controller signs that exact transaction, and the proposer's device completes the broadcast with `signAction`. The app budgets 100 satoshis per kilobyte (`FEE_PER_KB` in `escrow.ts`) for the spend; the wallet's own fee model takes what it needs and may return the remainder to the proposer as change.
+- **All broadcasting goes through the wallet.** Funding, finalize, and cancel transactions are submitted via the BRC-100 wallet (`createAction`/`signAction`) — the app never talks to a miner or ARC endpoint directly.
+- **Proposal signatures use `SIGHASH_SINGLE | ANYONECANPAY | FORKID`.** A proposal is a skeleton transaction: the escrow input at index 0 paired with a recipient output at index 0 paying the full escrow amount. Each signature commits only to that input/output pair, so whichever controller finalizes can hand the skeleton to their own wallet (`createAction`), which appends its funding inputs and change outputs — and pays the network fee — without invalidating anyone's signatures. The wallet must keep the pair at index 0 (`randomizeOutputs: false`), version 1, lockTime 0 and sequence `0xffffffff`; any deviation fails script verification rather than broadcasting a bad spend.
 
 ---
 

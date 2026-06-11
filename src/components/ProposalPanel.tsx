@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCrowd } from '../hooks/useCrowd'
-import { signProposal, verifySignature, finalizeProposal, hasProposalRef } from '../lib/escrow'
+import { signProposal, verifySignature, finalizeProposal } from '../lib/escrow'
 import { fanOut } from '../lib/messages'
 import type { EscrowState, ProposalState } from '../lib/store'
 import type { InviteMsg, SignatureMsg, VetoMsg, FinalizedMsg } from '../lib/protocol'
@@ -65,11 +65,8 @@ export function ProposalPanel ({ invite, es, ps, highlighted = false }: Props) {
   const ready = verifiedCount >= invite.threshold
   const hasMySig = ownKey in ps.signatures
   const hasMyVeto = ownKey in ps.vetoes
-  // Broadcasting goes through the wallet signing session opened at draft time,
-  // so only the proposer's device can finalize.
-  const canBroadcast = hasProposalRef(proposalId)
 
-  // Auto-finalize: if this device drafted the proposal and we just reached threshold
+  // Auto-finalize: if I'm the proposer and we just reached threshold
   useEffect(() => {
     if (
       !autoFinalizeGuard.current &&
@@ -78,7 +75,6 @@ export function ProposalPanel ({ invite, es, ps, highlighted = false }: Props) {
       isActive &&
       isController &&
       ready &&
-      canBroadcast &&
       ownKey === proposal.proposer
     ) {
       autoFinalizeGuard.current = true
@@ -257,7 +253,7 @@ export function ProposalPanel ({ invite, es, ps, highlighted = false }: Props) {
               </button>
             </>
           )}
-          {ready && !busy && canBroadcast && (
+          {ready && !busy && (
             <button
               type="button"
               className="btn"
@@ -267,11 +263,6 @@ export function ProposalPanel ({ invite, es, ps, highlighted = false }: Props) {
             >
               Finalize &amp; broadcast
             </button>
-          )}
-          {ready && !busy && !canBroadcast && (
-            <div style={{ width: '100%', color: 'var(--text-dim)', fontSize: 13, textAlign: 'center', padding: '8px 0' }}>
-              Threshold reached — the proposer&apos;s device broadcasts the transfer
-            </div>
           )}
           {busy && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-dim)', fontSize: 13 }}>
