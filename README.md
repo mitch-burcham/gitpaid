@@ -79,7 +79,7 @@ npm test
 - **Finalize races are benign.** If multiple clients observe the threshold simultaneously and each broadcasts, they are all spending the same UTXO: only one will be accepted by the network. The first confirmed broadcast wins; the rest are double-spend failures.
 - **The refund path is originator-only.** The cancel unlocking script requires a signature from the BRC-29 key derived to `counterparty: 'self'` with nonces stored only in the originator's wallet. No other party can produce a valid cancel signature.
 - **Signatures are verified client-side before counting.** `verifySignature` in `escrow.ts` checks each incoming `signature` message against the expected BRC-42 derived public key before including it in the threshold count. Invalid or mis-attributed signatures are silently ignored.
-- **All broadcasting goes through the wallet.** Funding, finalize, and cancel transactions are submitted via the BRC-100 wallet (`createAction`/`signAction`) — the app never talks to a miner or ARC endpoint directly. Proposal spends pay a fixed fee of 100 satoshis per kilobyte (`FEE_PER_KB` in `escrow.ts`).
+- **All broadcasting goes through the wallet.** Funding, proposal, finalize, and cancel transactions are submitted via the BRC-100 wallet (`createAction`/`signAction`) — the app never talks to a miner or ARC endpoint directly. The proposer's wallet drafts the spending transaction (`createAction` with `signAndProcess: false`), every controller signs that exact transaction, and the proposer's device completes the broadcast with `signAction`. The app budgets 100 satoshis per kilobyte (`FEE_PER_KB` in `escrow.ts`) for the spend; the wallet's own fee model takes what it needs and may return the remainder to the proposer as change.
 
 ---
 
