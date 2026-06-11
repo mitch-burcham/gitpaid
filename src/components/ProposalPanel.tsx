@@ -70,7 +70,7 @@ export function ProposalPanel ({ invite, es, ps, highlighted = false }: Props) {
   const hasMySig = ownKey in ps.signatures
   const hasMyVeto = ownKey in ps.vetoes
 
-  // Auto-finalize: if I'm the proposer and we just reached threshold
+  // Auto-finalize: any controller triggers this once threshold is reached
   useEffect(() => {
     if (
       !autoFinalizeGuard.current &&
@@ -78,14 +78,13 @@ export function ProposalPanel ({ invite, es, ps, highlighted = false }: Props) {
       isOpen &&
       isActive &&
       isController &&
-      ready &&
-      ownKey === proposal.proposer
+      ready
     ) {
       autoFinalizeGuard.current = true
       void handleFinalize()
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, isOpen, isActive, isController, ownKey, proposal.proposer])
+  }, [ready, isOpen, isActive, isController])
 
   async function handleSign () {
     if (busyRef.current) return

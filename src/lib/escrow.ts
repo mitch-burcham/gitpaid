@@ -11,11 +11,13 @@ import {
   Hash,
   P2PKH,
 } from '@bsv/sdk'
+import { STANDARD_PAYMENT_MESSAGEBOX } from '@bsv/message-box-client'
 import type { InviteMsg, ProposalMsg } from './protocol'
 import { MULTISIG_PROTOCOL, BRC29_PROTOCOL } from './protocol'
 import type { EscrowState } from './store'
 import { CrowdEscrow, SIGHASH_SCOPE_SINGLE_ACP } from './CrowdEscrow'
 import { wallet, getOwnIdentityKey } from './wallet'
+import { mbx } from './messages'
 
 // ---------------------------------------------------------------------------
 // Public parameter interfaces
@@ -374,9 +376,32 @@ export async function finalizeProposal (
     options: { randomizeOutputs: false, acceptDelayedBroadcast: false },
   })
 
-  if (result.txid !== undefined) return result.txid
-  if (result.tx != null) return Transaction.fromAtomicBEEF(result.tx).id('hex')
-  throw new Error('Wallet returned no transaction id for the finalized transfer')
+  const txid = result.txid ?? (result.tx != null ? Transaction.fromAtomicBEEF(result.tx).id('hex') : undefined)
+  if (txid === undefined) throw new Error('Wallet returned no transaction id for the finalized transfer')
+
+  // Notify the recipient's payment inbox so their wallet can internalize the tx.
+  // The derivation was done during buildProposal with counterparty=recipient, so
+  // senderPublicKey (resolved from msg.sender on their side) is the proposer.
+  const recipient = ps.proposal.recipient
+  if (recipient !== undefined && result.tx != null) {
+    const paymentToken = {
+      customInstructions: {
+        derivationPrefix: recipient.derivationPrefix,
+        derivationSuffix: recipient.derivationSuffix,
+      },
+      transaction: result.tx,
+      amount: invite.satoshis,
+    }
+    await mbx.sendMessage({
+      recipient: recipient.identityKey,
+      messageBox: STANDARD_PAYMENT_MESSAGEBOX,
+      body: JSON.stringify(paymentToken),
+    }).catch((err: unknown) => {
+      console.warn('finalizeProposal: peer-pay notify failed', err)
+    })
+  }
+
+  return txid
 }
 
 /**
