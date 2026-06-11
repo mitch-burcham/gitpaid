@@ -1,11 +1,12 @@
 import { memo, useEffect, useState } from 'react'
-import { resolveKey } from '../lib/identity'
+import { resolveKey, placeholderName } from '../lib/identity'
 import type { DisplayableIdentity } from '../lib/identity'
 
 interface Props {
   identityKey: string
   size?: number
   showName?: boolean
+  suffix?: string
 }
 
 function keyHue (key: string): number {
@@ -16,7 +17,7 @@ function keyHue (key: string): number {
   return Math.abs(hash) % 360
 }
 
-function AvatarChipInner ({ identityKey, size = 32, showName = true }: Props) {
+function AvatarChipInner ({ identityKey, size = 32, showName = true, suffix }: Props) {
   const [loading, setLoading] = useState(true)
   const [identity, setIdentity] = useState<DisplayableIdentity | undefined>(undefined)
 
@@ -35,7 +36,6 @@ function AvatarChipInner ({ identityKey, size = 32, showName = true }: Props) {
     return () => { cancelled = true }
   }, [identityKey])
 
-  const abbrev = `${identityKey.slice(0, 6)}…${identityKey.slice(-4)}`
   const hue = keyHue(identityKey)
 
   const circleStyle: React.CSSProperties = {
@@ -55,7 +55,9 @@ function AvatarChipInner ({ identityKey, size = 32, showName = true }: Props) {
 
   const nameStyle: React.CSSProperties = {
     display: 'flex',
-    flexDirection: 'column',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     lineHeight: 1.3,
   }
 
@@ -65,9 +67,10 @@ function AvatarChipInner ({ identityKey, size = 32, showName = true }: Props) {
     color: 'var(--text)',
   }
 
-  const keyTextStyle: React.CSSProperties = {
-    fontSize: 11,
+  const suffixStyle: React.CSSProperties = {
+    fontSize: 12,
     color: 'var(--text-dim)',
+    fontStyle: 'italic',
   }
 
   if (loading) {
@@ -78,30 +81,30 @@ function AvatarChipInner ({ identityKey, size = 32, showName = true }: Props) {
           style={{ ...circleStyle }}
         />
         {showName && (
-          <span style={nameStyle}>
-            <span className="shimmer" style={{ width: 60, height: 12, borderRadius: 4, display: 'inline-block' }} />
-          </span>
+          <span className="shimmer" style={{ width: 72, height: 12, borderRadius: 4, display: 'inline-block' }} />
         )}
       </span>
     )
   }
 
+  // Resolved name or deterministic placeholder — never show raw key
+  const displayName = (identity?.name != null && identity.name !== '') ? identity.name : placeholderName(identityKey)
   const avatarURL = identity?.avatarURL
-  const name = identity?.name
 
   let avatar: React.ReactNode
   if (avatarURL != null && avatarURL !== '') {
     avatar = (
       <img
         src={avatarURL}
-        alt={name ?? abbrev}
+        alt={displayName}
         style={{ ...circleStyle, objectFit: 'cover' }}
       />
     )
   } else {
-    const initial = name ? name[0].toUpperCase() : identityKey[2]?.toUpperCase() ?? '?'
+    const initial = displayName[0]?.toUpperCase() ?? '?'
     avatar = (
       <span
+        title={identityKey}
         style={{
           ...circleStyle,
           background: `linear-gradient(135deg, hsl(${hue},80%,60%), hsl(${(hue + 60) % 360},80%,50%))`,
@@ -124,8 +127,10 @@ function AvatarChipInner ({ identityKey, size = 32, showName = true }: Props) {
       {avatar}
       {showName && (
         <span style={nameStyle}>
-          {name != null && <span style={nameTextStyle}>{name}</span>}
-          <span style={keyTextStyle}>{abbrev}</span>
+          <span style={nameTextStyle}>{displayName}</span>
+          {suffix != null && suffix !== '' && (
+            <span style={suffixStyle}>{suffix}</span>
+          )}
         </span>
       )}
     </span>

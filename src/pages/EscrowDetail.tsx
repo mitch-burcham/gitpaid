@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useParams, useSearchParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useCrowd } from '../hooks/useCrowd'
 import { decodeInvite } from '../lib/protocol'
 import type { CancelledMsg } from '../lib/protocol'
@@ -94,6 +94,8 @@ export function EscrowDetail () {
     (a, b) => b.proposal.createdAt - a.proposal.createdAt,
   )
 
+  const hasProposals = sortedProposals.length > 0
+
   const pillClass =
     status === 'active' ? 'pill pill-active' :
     status === 'cancelled' ? 'pill pill-cancelled' :
@@ -101,6 +103,17 @@ export function EscrowDetail () {
 
   return (
     <div className="page">
+      {/* Page header with wordmark home link */}
+      <header style={{ display: 'flex', alignItems: 'center', marginBottom: 24 }}>
+        <Link
+          to="/"
+          className="grad-text"
+          style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 700, lineHeight: 1, textDecoration: 'none' }}
+        >
+          Crowd
+        </Link>
+      </header>
+
       {/* Hero panel */}
       <div className="panel" style={{ marginBottom: 24 }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 20, flexWrap: 'wrap' }}>
@@ -121,6 +134,20 @@ export function EscrowDetail () {
               </span>
               <span className={pillClass}>{status}</span>
             </div>
+
+            {/* Spent / cancelled transaction link */}
+            {escrow.spentTxid != null && (
+              <div style={{ marginBottom: 10 }}>
+                <a
+                  href={`https://whatsonchain.com/tx/${escrow.spentTxid}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ fontSize: 13, color: 'var(--text-dim)', textDecoration: 'underline' }}
+                >
+                  View transaction ↗
+                </a>
+              </div>
+            )}
 
             {/* N-of-M rule */}
             <p style={{ margin: '0 0 10px', fontSize: 14, color: 'var(--text-dim)' }}>
@@ -143,15 +170,12 @@ export function EscrowDetail () {
           </div>
         </div>
 
-        {/* Share link (collapsible) */}
-        <details style={{ marginTop: 18 }}>
-          <summary style={{ cursor: 'pointer', fontSize: 13, color: 'var(--text-dim)', userSelect: 'none', listStyle: 'none', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ fontSize: 11 }}>▶</span> Share invite link
-          </summary>
-          <div style={{ marginTop: 10 }}>
+        {/* Share link — inline, no collapsible wrapper */}
+        {isActive && (
+          <div style={{ marginTop: 18 }}>
             <ShareLink invite={invite} />
           </div>
-        </details>
+        )}
 
         {/* Cancel escrow (originator only, active only) */}
         {isOriginator && isActive && (
@@ -178,15 +202,15 @@ export function EscrowDetail () {
         )}
       </div>
 
-      {/* New transfer section */}
+      {/* New transfer section — auto-expanded when no proposals exist */}
       {isActive && (
         <div style={{ marginBottom: 24 }}>
-          <ProposeForm invite={invite} />
+          <ProposeForm invite={invite} defaultOpen={!hasProposals} />
         </div>
       )}
 
       {/* Proposals list */}
-      {sortedProposals.length > 0 && (
+      {hasProposals && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, margin: 0 }}>
             Proposals
@@ -203,9 +227,9 @@ export function EscrowDetail () {
         </div>
       )}
 
-      {sortedProposals.length === 0 && (
+      {!hasProposals && !isActive && (
         <div className="panel" style={{ textAlign: 'center', color: 'var(--text-dim)', fontSize: 14 }}>
-          No proposals yet.{isActive ? ' Create one above.' : ''}
+          No proposals.
         </div>
       )}
     </div>

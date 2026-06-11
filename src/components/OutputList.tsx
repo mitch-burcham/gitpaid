@@ -1,32 +1,11 @@
 import { useMemo } from 'react'
-import { Transaction, Utils } from '@bsv/sdk'
+import { Transaction } from '@bsv/sdk'
 import type { InviteMsg, ProposalMsg } from '../lib/protocol'
 import { AvatarChip } from './AvatarChip'
 
 interface Props {
   proposal: ProposalMsg
   invite: InviteMsg
-}
-
-function decodeP2PKHAddress (hex: string): string | null {
-  try {
-    // P2PKH: OP_DUP(76) OP_HASH160(a9) <20b> OP_EQUALVERIFY(88) OP_CHECKSIG(ac)
-    const bytes = Utils.toArray(hex, 'hex')
-    if (
-      bytes.length === 25 &&
-      bytes[0] === 0x76 &&
-      bytes[1] === 0xa9 &&
-      bytes[2] === 0x14 &&
-      bytes[23] === 0x88 &&
-      bytes[24] === 0xac
-    ) {
-      const pubKeyHash = bytes.slice(3, 23)
-      return Utils.toBase58Check(pubKeyHash, [0])
-    }
-    return null
-  } catch {
-    return null
-  }
 }
 
 function fmtSats (n: number): string {
@@ -49,31 +28,47 @@ export function OutputList ({ proposal, invite }: Props) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       {outputs.map((out, i) => {
         const sats = out.satoshis ?? 0
-        const scriptHex = out.lockingScript?.toHex() ?? ''
         let destination: React.ReactNode
 
         if (proposal.recipient != null && i === 0) {
           destination = (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              <AvatarChip identityKey={proposal.recipient.identityKey} size={24} showName />
-              <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>(derived key)</span>
-            </span>
+            <AvatarChip identityKey={proposal.recipient.identityKey} size={24} showName />
           )
         } else {
-          const addr = decodeP2PKHAddress(scriptHex)
-          if (addr != null) {
-            destination = (
-              <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text-dim)', wordBreak: 'break-all' }}>
-                {addr}
+          destination = (
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                background: 'var(--bg-raise)',
+                border: '1px solid var(--panel-border)',
+                borderRadius: 999,
+                padding: '3px 10px 3px 8px',
+                fontSize: 13,
+                color: 'var(--text-dim)',
+              }}
+            >
+              <span
+                style={{
+                  width: 20,
+                  height: 20,
+                  borderRadius: '50%',
+                  background: 'var(--panel-border)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: 'var(--text-dim)',
+                  flexShrink: 0,
+                }}
+              >
+                @
               </span>
-            )
-          } else {
-            destination = (
-              <span style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-dim)', wordBreak: 'break-all' }}>
-                {scriptHex.length > 40 ? scriptHex.slice(0, 40) + '…' : scriptHex}
-              </span>
-            )
-          }
+              External address
+            </span>
+          )
         }
 
         return (

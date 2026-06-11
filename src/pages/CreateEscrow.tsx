@@ -106,6 +106,16 @@ export function CreateEscrow () {
     const { invite, failedRecipients } = success
     return (
       <div className="page" style={{ maxWidth: 600 }}>
+        {/* Wordmark */}
+        <header style={{ marginBottom: 32 }}>
+          <Link
+            to="/"
+            className="grad-text"
+            style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 700, lineHeight: 1, textDecoration: 'none' }}
+          >
+            Crowd
+          </Link>
+        </header>
         {/* Success hero */}
         <div style={{ textAlign: 'center', marginBottom: 40 }}>
           <div
@@ -178,21 +188,14 @@ export function CreateEscrow () {
           </div>
         )}
 
-        {/* Action buttons */}
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+        {/* Action button */}
+        <div style={{ display: 'flex', gap: 12 }}>
           <Link
             to={`/e/${invite.escrowId}`}
             className="btn"
-            style={{ flex: 1, minWidth: 140 }}
+            style={{ flex: 1, minHeight: 48, fontSize: 15, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           >
-            View escrow
-          </Link>
-          <Link
-            to="/"
-            className="btn btn-ghost"
-            style={{ flex: 1, minWidth: 140, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-          >
-            Back to dashboard
+            Open escrow
           </Link>
         </div>
       </div>
@@ -200,7 +203,7 @@ export function CreateEscrow () {
   }
 
   // ─── Form view ───────────────────────────────────────────────
-  const summaryPanel = (
+  const summaryPanel: React.ReactNode = (
     <div className="panel" style={{ padding: 20 }}>
       <h3 style={{ margin: '0 0 16px', fontFamily: 'var(--font-display)', fontSize: 15, color: 'var(--text-dim)' }}>
         Summary
@@ -232,6 +235,16 @@ export function CreateEscrow () {
 
   return (
     <div className="page">
+      {/* Wordmark */}
+      <header style={{ marginBottom: 24 }}>
+        <Link
+          to="/"
+          className="grad-text"
+          style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 700, lineHeight: 1, textDecoration: 'none' }}
+        >
+          Crowd
+        </Link>
+      </header>
       <h1
         style={{
           fontFamily: 'var(--font-display)',
@@ -313,8 +326,7 @@ export function CreateEscrow () {
                   marginBottom: 10,
                 }}
               >
-                <AvatarChip identityKey={ownKey} size={24} showName />
-                <span style={{ fontSize: 12, color: 'var(--text-dim)', fontStyle: 'italic' }}>(you)</span>
+                <AvatarChip identityKey={ownKey} size={24} showName suffix="(you)" />
               </div>
             )}
 

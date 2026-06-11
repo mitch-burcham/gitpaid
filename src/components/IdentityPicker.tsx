@@ -5,7 +5,7 @@ import {
   useState,
   type KeyboardEvent,
 } from 'react'
-import { searchIdentities } from '../lib/identity'
+import { searchIdentities, placeholderName } from '../lib/identity'
 import type { DisplayableIdentity } from '../lib/identity'
 import { AvatarChip } from './AvatarChip'
 
@@ -114,7 +114,7 @@ export function IdentityPicker ({ selected, onChange, excludeKeys = [], single =
   const addByKey = useCallback((key: string) => {
     const synth: DisplayableIdentity = {
       identityKey: key,
-      name: '',
+      name: placeholderName(key),
       avatarURL: '',
       abbreviatedKey: `${key.slice(0, 6)}…${key.slice(-4)}`,
       badgeIconURL: '',
@@ -221,11 +221,9 @@ export function IdentityPicker ({ selected, onChange, excludeKeys = [], single =
               onClick={() => addByKey(trimmedQuery)}
               style={rowStyle}
             >
-              <AvatarChip identityKey={trimmedQuery} size={28} showName={false} />
+              <AvatarChip identityKey={trimmedQuery} size={28} showName />
               <span style={{ flex: 1, fontSize: 13, color: 'var(--text-dim)' }}>
-                Add key <span style={{ fontFamily: 'monospace', color: 'var(--text)', wordBreak: 'break-all' }}>
-                  {trimmedQuery.slice(0, 12)}…{trimmedQuery.slice(-6)}
-                </span>
+                Add by key
               </span>
               <span style={addBadgeStyle}>Add</span>
             </button>

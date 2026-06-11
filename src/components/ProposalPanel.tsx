@@ -33,6 +33,10 @@ export function ProposalPanel ({ invite, es, ps, highlighted = false }: Props) {
   // or the auto-finalize effect racing a manual action.
   const busyRef = useRef(false)
 
+  // Inline veto expansion state
+  const [vetoExpanded, setVetoExpanded] = useState(false)
+  const [vetoReason, setVetoReason] = useState('')
+
   const { proposal } = ps
   const escrowId = invite.escrowId
   const proposalId = proposal.proposalId
@@ -107,17 +111,23 @@ export function ProposalPanel ({ invite, es, ps, highlighted = false }: Props) {
     }
   }
 
-  async function handleVeto () {
-    if (busyRef.current) return
-    const reason = window.prompt('Reason for vetoing (optional):') ?? ''
+  async function handleVetoConfirm () {
     if (busyRef.current) return
     busyRef.current = true
     setBusy(true)
     setError(null)
     try {
-      const msg: VetoMsg = { type: 'veto', escrowId, proposalId, vetoer: ownKey, reason: reason || undefined }
+      const msg: VetoMsg = {
+        type: 'veto',
+        escrowId,
+        proposalId,
+        vetoer: ownKey,
+        reason: vetoReason.trim() || undefined,
+      }
       await fanOut(msg, invite.controllers, ownKey)
       dispatchMessages([msg])
+      setVetoExpanded(false)
+      setVetoReason('')
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -177,15 +187,15 @@ export function ProposalPanel ({ invite, es, ps, highlighted = false }: Props) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 16 }}>
         {invite.controllers.map(ctrl => {
           const verified = verifiedMap[ctrl] === true
-          const vetoReason = ps.vetoes[ctrl]
+          const vetoReasonVal = ps.vetoes[ctrl]
 
           let statusNode: React.ReactNode
           if (verified) {
             statusNode = <span style={{ fontSize: 12, color: 'var(--ok)' }}>✓ signed</span>
-          } else if (vetoReason != null) {
+          } else if (vetoReasonVal != null) {
             statusNode = (
               <span style={{ fontSize: 12, color: 'var(--danger)' }}>
-                ✗ vetoed{vetoReason !== '' ? `: ${vetoReason}` : ''}
+                ✗ vetoed{vetoReasonVal !== '' ? `: ${vetoReasonVal}` : ''}
               </span>
             )
           } else {
@@ -209,14 +219,14 @@ export function ProposalPanel ({ invite, es, ps, highlighted = false }: Props) {
       )}
       {ps.status === 'finalized' && ps.txid != null && (
         <div style={{ background: 'rgba(61,240,168,0.06)', border: '1px solid var(--ok)', borderRadius: 'var(--radius-sm)', padding: '10px 14px', color: 'var(--ok)', fontSize: 14, marginBottom: 12 }}>
-          <span>Broadcast ✓ </span>
+          Sent ✓ —{' '}
           <a
             href={`https://whatsonchain.com/tx/${ps.txid}`}
             target="_blank"
             rel="noopener noreferrer"
-            style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--ok)', wordBreak: 'break-all' }}
+            style={{ color: 'var(--ok)', textDecoration: 'underline' }}
           >
-            {ps.txid.slice(0, 12)}…{ps.txid.slice(-8)}
+            View transaction ↗
           </a>
         </div>
       )}
@@ -230,9 +240,9 @@ export function ProposalPanel ({ invite, es, ps, highlighted = false }: Props) {
 
       {/* Actions */}
       {isOpen && isActive && isController && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-          {!hasMySig && !hasMyVeto && (
-            <>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {!hasMySig && !hasMyVeto && !vetoExpanded && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
               <button
                 type="button"
                 className="btn"
@@ -245,14 +255,59 @@ export function ProposalPanel ({ invite, es, ps, highlighted = false }: Props) {
               <button
                 type="button"
                 className="btn btn-danger"
-                onClick={() => { void handleVeto() }}
+                onClick={() => setVetoExpanded(true)}
                 disabled={busy}
                 style={{ flex: 1, minWidth: 120 }}
               >
                 Veto
               </button>
-            </>
+            </div>
           )}
+
+          {/* Inline veto expansion (progressive disclosure) */}
+          {vetoExpanded && !hasMySig && !hasMyVeto && (
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+                padding: '14px 16px',
+                background: 'rgba(255,92,122,0.04)',
+                border: '1px solid rgba(255,92,122,0.3)',
+                borderRadius: 'var(--radius-sm)',
+              }}
+            >
+              <input
+                className="input"
+                placeholder="Reason (optional)"
+                value={vetoReason}
+                onChange={e => setVetoReason(e.target.value)}
+                disabled={busy}
+                autoFocus
+              />
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={() => { void handleVetoConfirm() }}
+                  disabled={busy}
+                  style={{ flex: 1 }}
+                >
+                  {busy ? 'Vetoing…' : 'Confirm veto'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => { setVetoExpanded(false); setVetoReason('') }}
+                  disabled={busy}
+                  style={{ flex: 1 }}
+                >
+                  Back
+                </button>
+              </div>
+            </div>
+          )}
+
           {ready && !busy && (
             <button
               type="button"

@@ -9,6 +9,7 @@ import { IdentityPicker } from './IdentityPicker'
 
 interface Props {
   invite: InviteMsg
+  defaultOpen?: boolean
 }
 
 type RecipientMode = 'identity' | 'address'
@@ -17,9 +18,9 @@ function fmtSats (n: number): string {
   return new Intl.NumberFormat().format(n) + ' sats'
 }
 
-export function ProposeForm ({ invite }: Props) {
+export function ProposeForm ({ invite, defaultOpen = false }: Props) {
   const { ownKey, dispatchMessages } = useCrowd()
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(defaultOpen)
   const [mode, setMode] = useState<RecipientMode>('identity')
   const [selectedIdentity, setSelectedIdentity] = useState<DisplayableIdentity[]>([])
   const [address, setAddress] = useState('')

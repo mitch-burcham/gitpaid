@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { encodeInvite } from '../lib/protocol'
 import type { InviteMsg } from '../lib/protocol'
 
@@ -8,9 +8,9 @@ interface Props {
 
 export function ShareLink ({ invite }: Props) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
-  const urlRef = useRef<HTMLSpanElement>(null)
 
   const url = `${location.origin}${location.pathname}#/e/${invite.escrowId}?d=${encodeInvite(invite)}`
+  const canShare = typeof navigator.share === 'function'
 
   function execCommandFallback (): boolean {
     try {
@@ -51,55 +51,49 @@ export function ShareLink ({ invite }: Props) {
     navigator.share({ title: 'Crowd escrow', url }).catch(() => {})
   }
 
+  const copyLabel =
+    copyState === 'copied' ? 'Copied ✓' :
+    copyState === 'failed' ? 'Copy failed' :
+    'Copy invite link'
+
   return (
     <div
-      className="panel"
       style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 10,
-        padding: '12px 16px',
+        gap: 8,
         flexWrap: 'wrap',
       }}
     >
-      <span
-        ref={urlRef}
-        style={{
-          fontFamily: 'monospace',
-          fontSize: 12,
-          color: 'var(--text-dim)',
-          flex: 1,
-          minWidth: 0,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}
-      >
-        {url}
-      </span>
-
-      <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-        <button
-          type="button"
-          className="btn btn-ghost"
-          onClick={handleCopy}
-          style={{ minHeight: 36, padding: '0 14px', fontSize: 13 }}
-        >
-          {copyState === 'copied' ? 'Copied ✓' : copyState === 'failed' ? 'Copy failed' : 'Copy'}
-        </button>
-
-        {typeof navigator.share === 'function' && (
+      {canShare ? (
+        <>
+          <button
+            type="button"
+            className="btn"
+            onClick={handleShare}
+            style={{ minHeight: 44, padding: '0 20px', fontSize: 14 }}
+          >
+            Share invite
+          </button>
           <button
             type="button"
             className="btn btn-ghost"
-            onClick={handleShare}
-            style={{ minHeight: 36, padding: '0 14px', fontSize: 13 }}
-            aria-label="Share link"
+            onClick={handleCopy}
+            style={{ minHeight: 44, padding: '0 16px', fontSize: 13 }}
           >
-            Share
+            {copyLabel}
           </button>
-        )}
-      </div>
+        </>
+      ) : (
+        <button
+          type="button"
+          className="btn"
+          onClick={handleCopy}
+          style={{ minHeight: 44, padding: '0 20px', fontSize: 14 }}
+        >
+          {copyLabel}
+        </button>
+      )}
     </div>
   )
 }

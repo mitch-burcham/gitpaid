@@ -11,12 +11,13 @@ export function Dashboard () {
     <div className="page">
       {/* Header */}
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 32 }}>
-        <span
+        <Link
+          to="/"
           className="grad-text"
-          style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 700, lineHeight: 1 }}
+          style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 700, lineHeight: 1, textDecoration: 'none' }}
         >
           Crowd
-        </span>
+        </Link>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           {ownKey !== '' && <AvatarChip identityKey={ownKey} size={32} showName={false} />}
           {escrows.length > 0 && (
