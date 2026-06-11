@@ -44,8 +44,8 @@ export async function searchIdentities (query: string): Promise<DisplayableIdent
   })
 }
 
-/** Resolved identity cache. */
-const resolvedCache = new Map<string, DisplayableIdentity>()
+/** Resolved identity cache. Misses are cached as null so unknown keys don't re-query on every render. */
+const resolvedCache = new Map<string, DisplayableIdentity | null>()
 /** In-flight promise cache to avoid duplicate concurrent lookups. */
 const inFlightCache = new Map<string, Promise<DisplayableIdentity | undefined>>()
 
@@ -56,7 +56,7 @@ const inFlightCache = new Map<string, Promise<DisplayableIdentity | undefined>>(
  */
 export async function resolveKey (identityKey: string): Promise<DisplayableIdentity | undefined> {
   const cached = resolvedCache.get(identityKey)
-  if (cached !== undefined) return cached
+  if (cached !== undefined) return cached ?? undefined
 
   const inFlight = inFlightCache.get(identityKey)
   if (inFlight !== undefined) return inFlight
@@ -65,9 +65,7 @@ export async function resolveKey (identityKey: string): Promise<DisplayableIdent
     try {
       const results = await identityClient.resolveByIdentityKey({ identityKey })
       const found = results[0]
-      if (found !== undefined) {
-        resolvedCache.set(identityKey, found)
-      }
+      resolvedCache.set(identityKey, found ?? null)
       return found
     } catch {
       return undefined
