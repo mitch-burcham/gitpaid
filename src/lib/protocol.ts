@@ -46,3 +46,43 @@ export function isCrowdMessage (x: unknown): x is CrowdMessage {
   return t === 'invite' || t === 'proposal' || t === 'signature' ||
          t === 'veto' || t === 'finalized' || t === 'cancelled'
 }
+
+/**
+ * Encode an InviteMsg as a URL-safe base64 string (no padding) so it can be
+ * embedded in a query parameter.  We encode the JSON as UTF-8 bytes then
+ * base64-encode, replacing the standard `+/=` characters with `-_` and
+ * stripping padding so the string never needs percent-encoding.
+ */
+export function encodeInvite (i: InviteMsg): string {
+  const json = JSON.stringify(i)
+  // Encode the UTF-8 bytes via encodeURIComponent → unescape trick so that
+  // multi-byte characters are handled correctly by btoa.
+  const b64 = btoa(encodeURIComponent(json).replace(/%([0-9A-F]{2})/g, (_m, p1: string) =>
+    String.fromCharCode(parseInt(p1, 16))
+  ))
+  return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+/**
+ * Decode a URL-safe base64 string back to an InviteMsg.
+ * Returns undefined on any error, or if the decoded value is not a valid
+ * CrowdMessage with type === 'invite'.
+ */
+export function decodeInvite (s: string): InviteMsg | undefined {
+  try {
+    // Restore standard base64 characters and add back padding.
+    const b64 = s.replace(/-/g, '+').replace(/_/g, '/')
+    const padded = b64 + '==='.slice((b64.length + 3) % 4 || 0)
+    const json = decodeURIComponent(
+      atob(padded)
+        .split('')
+        .map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    )
+    const parsed: unknown = JSON.parse(json)
+    if (!isCrowdMessage(parsed) || parsed.type !== 'invite') return undefined
+    return parsed
+  } catch {
+    return undefined
+  }
+}
