@@ -8,6 +8,7 @@ import {
   type EscrowState,
 } from './store'
 import type { InviteMsg, ProposalMsg, SignatureMsg, VetoMsg, FinalizedMsg, CancelledMsg } from './protocol'
+import { isCrowdMessage } from './protocol'
 
 // Polyfill localStorage for Node (vitest runs in node by default)
 if (typeof localStorage === 'undefined') {
@@ -369,5 +370,35 @@ describe('reduce: cross-escrow isolation', () => {
     const s3 = reduce(s2, makeProposal({ escrowId: 'bbb.0', proposalId: 'propB' }))
     expect(s3.escrows['aaa.0'].proposals).toEqual({})
     expect(s3.escrows['bbb.0'].proposals['propB']).toBeDefined()
+  })
+})
+
+describe('reduce: signature on finalized proposal', () => {
+  it('ignores a signature after finalization', () => {
+    const s1 = reduce(emptyState, makeInvite())
+    const s2 = reduce(s1, makeProposal())
+    const s3 = reduce(s2, makeFinalized())
+    const s4 = reduce(s3, makeSig(CONTROLLERS[1]))
+    expect(s4).toBe(s3)
+    expect(s4.escrows['deadbeef.0'].proposals['prop001'].signatures[CONTROLLERS[1]]).toBeUndefined()
+  })
+})
+
+describe('isCrowdMessage', () => {
+  it('rejects null, primitives, and unknown types', () => {
+    expect(isCrowdMessage(null)).toBe(false)
+    expect(isCrowdMessage(undefined)).toBe(false)
+    expect(isCrowdMessage('invite')).toBe(false)
+    expect(isCrowdMessage(42)).toBe(false)
+    expect(isCrowdMessage({})).toBe(false)
+    expect(isCrowdMessage({ type: 'unknown' })).toBe(false)
+  })
+
+  it('accepts every message variant', () => {
+    for (const m of [makeInvite(), makeProposal(), makeSig(CONTROLLERS[0]), makeFinalized()]) {
+      expect(isCrowdMessage(m)).toBe(true)
+    }
+    expect(isCrowdMessage({ type: 'veto' })).toBe(true)
+    expect(isCrowdMessage({ type: 'cancelled' })).toBe(true)
   })
 })

@@ -15,7 +15,7 @@ export interface EscrowState {
 }
 export interface CrowdState { escrows: Record<string, EscrowState> }
 
-export const emptyState: CrowdState = { escrows: {} }
+export const emptyState: CrowdState = Object.freeze({ escrows: Object.freeze({}) }) as CrowdState
 
 export function reduce (state: CrowdState, msg: CrowdMessage): CrowdState {
   switch (msg.type) {
