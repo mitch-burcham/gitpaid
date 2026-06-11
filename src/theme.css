@@ -255,3 +255,39 @@ body::before {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ─── CreateEscrow two-column layout ──────────────────────── */
+.create-escrow-layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 24px;
+}
+
+.create-escrow-summary-desktop {
+  display: none;
+}
+
+.create-escrow-summary-inline {
+  display: block;
+}
+
+@media (min-width: 900px) {
+  .create-escrow-layout {
+    grid-template-columns: 1fr 320px;
+    align-items: start;
+  }
+
+  .create-escrow-summary-desktop {
+    display: block;
+  }
+
+  .create-escrow-summary-inline {
+    display: none;
+  }
+}
+
+/* ─── IdentityPicker row hover ─────────────────────────────── */
+.ip-row:hover,
+button.ip-row:hover {
+  background: rgba(148, 184, 255, 0.06) !important;
+}
