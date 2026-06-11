@@ -35,6 +35,8 @@ export function CrowdProvider ({ children }: { children: ReactNode }) {
 
   // Keep cleanup fn from listenLive so we can call it on unmount.
   const cleanupRef = useRef<(() => Promise<void>) | null>(null)
+  // Polling fallback when the relay doesn't support websockets.
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Re-runs on every mount (StrictMode remounts included) so the live
   // subscription is always re-established; the cancelled flag plus an
@@ -70,7 +72,8 @@ export function CrowdProvider ({ children }: { children: ReactNode }) {
       // Step 4: mark ready regardless of inbox outcome.
       if (!cancelled) setReady(true)
 
-      // Step 5: open live subscription.
+      // Step 5: open live subscription; if the relay has no websocket
+      // support, silently fall back to polling the inbox over HTTP.
       try {
         const cleanup = await listenLive((m) => {
           setState(s => applyAndSave(ownKeyRef.current, s, [m]))
@@ -80,9 +83,18 @@ export function CrowdProvider ({ children }: { children: ReactNode }) {
         } else {
           cleanupRef.current = cleanup
         }
-      } catch (e) {
-        if (!cancelled) {
-          setMbxError(e instanceof Error ? e.message : String(e))
+      } catch {
+        if (!cancelled && pollTimerRef.current == null) {
+          pollTimerRef.current = setInterval(() => {
+            drainInbox()
+              .then(msgs => {
+                if (msgs.length > 0) {
+                  setState(s => applyAndSave(ownKeyRef.current, s, msgs))
+                }
+                setMbxError(undefined)
+              })
+              .catch(() => {}) // transient poll failures keep the last state
+          }, 15_000)
         }
       }
     }
@@ -99,6 +111,10 @@ export function CrowdProvider ({ children }: { children: ReactNode }) {
       if (cleanupRef.current != null) {
         cleanupRef.current().catch(() => {})
         cleanupRef.current = null
+      }
+      if (pollTimerRef.current != null) {
+        clearInterval(pollTimerRef.current)
+        pollTimerRef.current = null
       }
     }
   }, [])

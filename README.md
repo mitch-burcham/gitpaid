@@ -35,7 +35,7 @@ Sighash: `SIGHASH_ALL | SIGHASH_FORKID`, subscript = full locking script.
 
 ### Coordination via MessageBox
 
-All messages are JSON (auto-encrypted per recipient by `@bsv/message-box-client`), sent fan-out to every participant (originator + all controllers). The host is `https://message-box-us-1.bsvb.tech`, box name `crowd`.
+All messages are JSON (auto-encrypted per recipient by `@bsv/message-box-client`), sent fan-out to every participant (originator + all controllers). The host is `https://gmb.bsvblockchain.tech`, box name `crowd`.
 
 | Message type  | Purpose |
 |---------------|---------|
@@ -46,7 +46,7 @@ All messages are JSON (auto-encrypted per recipient by `@bsv/message-box-client`
 | `finalized`   | Broadcast succeeded — carries the resulting `txid`. |
 | `cancelled`   | Originator cancelled the escrow via the refund path — carries the `txid`. |
 
-Clients load state on startup via `listMessages({ messageBox: 'crowd' })` and stay live with `listenForLiveMessages`. Acknowledged messages are persisted to `localStorage` keyed by the user's own identity key.
+Clients load state on startup via `listMessages({ messageBox: 'crowd' })` and stay live with `listenForLiveMessages`. If the relay does not support websockets (the current gmb deployment does not), the app silently falls back to polling the inbox every 15 seconds over HTTP. Acknowledged messages are persisted to `localStorage` keyed by the user's own identity key.
 
 ### Share links
 

@@ -87,22 +87,31 @@ export async function drainInbox (): Promise<CrowdMessage[]> {
 export async function listenLive (
   onMessage: (m: CrowdMessage) => void,
 ): Promise<() => Promise<void>> {
-  await mbx.listenForLiveMessages({
-    messageBox: CROWD_BOX,
-    onMessage: (m) => {
-      try {
-        const body = parseBody(m.body)
-        if (isCrowdMessage(body)) {
-          onMessage(body)
-          mbx.acknowledgeMessage({ messageIds: [m.messageId] }).catch(() => {})
+  try {
+    await mbx.listenForLiveMessages({
+      messageBox: CROWD_BOX,
+      onMessage: (m) => {
+        try {
+          const body = parseBody(m.body)
+          if (isCrowdMessage(body)) {
+            onMessage(body)
+            mbx.acknowledgeMessage({ messageIds: [m.messageId] }).catch(() => {})
+          }
+        } catch {
+          // skip
         }
-      } catch {
-        // skip
-      }
-    },
-  })
+      },
+    })
+  } catch (e) {
+    // The underlying socket.io manager retries forever by default; if the
+    // host doesn't support websockets that means an endless reconnect loop.
+    // Tear the socket down so callers can fall back to polling.
+    await mbx.disconnectWebSocket().catch(() => {})
+    throw e
+  }
 
   return async (): Promise<void> => {
     await mbx.leaveRoom(CROWD_BOX)
+    await mbx.disconnectWebSocket().catch(() => {})
   }
 }
