@@ -101,7 +101,7 @@ export function ProposalPanel ({ invite, es, ps, highlighted = false }: Props) {
         signer: ownKey,
         sigHex,
       }
-      await fanOut(sigMsg, invite.controllers, ownKey)
+      await fanOut(sigMsg, invite.controllers)
       dispatchMessages([sigMsg])
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -124,7 +124,7 @@ export function ProposalPanel ({ invite, es, ps, highlighted = false }: Props) {
         vetoer: ownKey,
         reason: vetoReason.trim() || undefined,
       }
-      await fanOut(msg, invite.controllers, ownKey)
+      await fanOut(msg, invite.controllers)
       dispatchMessages([msg])
       setVetoExpanded(false)
       setVetoReason('')
@@ -144,7 +144,7 @@ export function ProposalPanel ({ invite, es, ps, highlighted = false }: Props) {
     try {
       const txid = await finalizeProposal(invite, es, proposalId)
       const msg: FinalizedMsg = { type: 'finalized', escrowId, proposalId, txid }
-      await fanOut(msg, invite.controllers, ownKey)
+      await fanOut(msg, invite.controllers)
       dispatchMessages([msg])
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))

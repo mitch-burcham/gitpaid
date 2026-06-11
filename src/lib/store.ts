@@ -169,25 +169,7 @@ export function reduce (state: CrowdState, msg: CrowdMessage): CrowdState {
   }
 }
 
-const STORAGE_PREFIX = 'crowd:'
 const MAX_PENDING = 200
-
-export function loadState (ownKey: string): CrowdState {
-  if (typeof localStorage === 'undefined') return emptyState
-  try {
-    const raw = localStorage.getItem(`${STORAGE_PREFIX}${ownKey}`)
-    if (raw === null) return emptyState
-    const parsed = JSON.parse(raw) as Partial<CrowdState>
-    return { escrows: parsed.escrows ?? {}, pending: parsed.pending ?? [] }
-  } catch {
-    return emptyState
-  }
-}
-
-export function saveState (ownKey: string, s: CrowdState): void {
-  if (typeof localStorage === 'undefined') return
-  localStorage.setItem(`${STORAGE_PREFIX}${ownKey}`, JSON.stringify(s))
-}
 
 /** True when the message can't apply yet because its parent (escrow or
  * proposal) is unknown — worth retaining. False for messages that are
@@ -210,12 +192,14 @@ function isOrphan (state: CrowdState, msg: CrowdMessage): boolean {
 }
 
 /**
- * Fold messages into state, retrying until a fixed point so out-of-order
- * delivery (signature before proposal before invite) still converges.
- * Messages that still can't apply but reference an unknown parent are kept
- * in `state.pending` (deduped, capped) for future batches.
+ * Pure: fold messages into state, retrying until a fixed point so
+ * out-of-order delivery (signature before proposal before invite) still
+ * converges. Messages that can't apply yet but reference an unknown parent
+ * are kept in `state.pending` (deduped, capped) for future batches. No
+ * persistence — MessageBox is the source of truth and state is rebuilt from
+ * the inbox on every load.
  */
-export function applyAndSave (ownKey: string, s: CrowdState, msgs: CrowdMessage[]): CrowdState {
+export function applyMessages (s: CrowdState, msgs: CrowdMessage[]): CrowdState {
   let queue: CrowdMessage[] = [...s.pending, ...msgs]
   let state: CrowdState = { escrows: s.escrows, pending: [] }
 
@@ -244,22 +228,14 @@ export function applyAndSave (ownKey: string, s: CrowdState, msgs: CrowdMessage[
     return true
   }).slice(-MAX_PENDING)
 
-  const next: CrowdState = { escrows: state.escrows, pending }
-  saveState(ownKey, next)
-  return next
+  return { escrows: state.escrows, pending }
 }
 
-/** Remove all escrows with status `cancelled` from local state. */
+/** Pure: remove all escrows with status `cancelled` from state. */
 export function removeCancelledEscrows (state: CrowdState): CrowdState {
   const escrows = Object.fromEntries(
     Object.entries(state.escrows).filter(([, es]) => es.status !== 'cancelled'),
   )
   if (Object.keys(escrows).length === Object.keys(state.escrows).length) return state
   return { ...state, escrows }
-}
-
-export function removeCancelledAndSave (ownKey: string, state: CrowdState): CrowdState {
-  const next = removeCancelledEscrows(state)
-  saveState(ownKey, next)
-  return next
 }

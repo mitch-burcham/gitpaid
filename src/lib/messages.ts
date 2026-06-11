@@ -6,16 +6,15 @@ import { isCrowdMessage } from './protocol'
 export const mbx = new MessageBoxClient({ walletClient: wallet, host: MESSAGEBOX_HOST })
 
 /**
- * Fan a message out to every party except self.
+ * Fan a message out to every party INCLUDING self — the copy in our own box
+ * is the durable record of our own actions (no local persistence).
  * All sends settle; returns identity keys that FAILED.
  */
 export async function fanOut (
   msg: CrowdMessage,
   recipients: string[],
-  ownKey: string,
 ): Promise<string[]> {
-  // Remove self and dedupe
-  const targets = [...new Set(recipients.filter(r => r !== ownKey))]
+  const targets = [...new Set(recipients)]
 
   const results = await Promise.allSettled(
     targets.map(recipient =>
@@ -46,46 +45,54 @@ function parseBody (raw: string | Record<string, unknown>): unknown {
   return raw
 }
 
+export interface InboxItem {
+  msg: CrowdMessage
+  messageId: string
+}
+
 /**
- * Drain inbox: list, parse, filter via isCrowdMessage, ack only successfully
- * parsed message ids, return parsed messages sorted by created_at ascending.
+ * Read the inbox WITHOUT acknowledging: MessageBox is the source of truth, so
+ * messages stay on the relay and state is rebuilt from them on every load.
+ * Returns parsed items sorted by created_at ascending, with messageIds kept
+ * for later garbage collection via ackMessages.
  */
-export async function drainInbox (): Promise<CrowdMessage[]> {
+export async function readInbox (): Promise<InboxItem[]> {
   const messages = await mbx.listMessages({ messageBox: CROWD_BOX })
 
-  const parsed: Array<{ id: string; created_at: string; msg: CrowdMessage }> = []
+  const parsed: Array<{ item: InboxItem; created_at: string }> = []
 
   for (const m of messages) {
     try {
       const body = parseBody(m.body)
       if (isCrowdMessage(body)) {
-        parsed.push({ id: m.messageId, created_at: m.created_at, msg: body })
+        parsed.push({ item: { msg: body, messageId: m.messageId }, created_at: m.created_at })
       }
     } catch {
       // skip unparseable
     }
   }
 
-  if (parsed.length > 0) {
-    try {
-      await mbx.acknowledgeMessage({ messageIds: parsed.map(p => p.id) })
-    } catch {
-      // ack failure shouldn't lose the returned messages
-    }
-  }
-
   return parsed
     .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-    .map(p => p.msg)
+    .map(p => p.item)
+}
+
+/**
+ * Garbage collection: acknowledging DELETES messages from the relay. Only
+ * call for escrows in a terminal state the user has chosen to clear.
+ */
+export async function ackMessages (messageIds: string[]): Promise<void> {
+  if (messageIds.length === 0) return
+  await mbx.acknowledgeMessage({ messageIds })
 }
 
 /**
  * Live updates: websocket listen on CROWD_BOX.
- * Parsed CrowdMessages go to onMessage; each is ack'd on arrival.
- * Returns an async cleanup function.
+ * Parsed CrowdMessages go to onMessage; messages are NOT acknowledged (the
+ * relay copy is the durable record). Returns an async cleanup function.
  */
 export async function listenLive (
-  onMessage: (m: CrowdMessage) => void,
+  onMessage: (item: InboxItem) => void,
 ): Promise<() => Promise<void>> {
   try {
     await mbx.listenForLiveMessages({
@@ -94,8 +101,7 @@ export async function listenLive (
         try {
           const body = parseBody(m.body)
           if (isCrowdMessage(body)) {
-            onMessage(body)
-            mbx.acknowledgeMessage({ messageIds: [m.messageId] }).catch(() => {})
+            onMessage({ msg: body, messageId: m.messageId })
           }
         } catch {
           // skip

@@ -78,7 +78,7 @@ export function CreateEscrow () {
         threshold: clampedThreshold,
         controllerIdentityKeys: others.map(o => o.identityKey),
       })
-      const failedRecipients = await fanOut(invite, invite.controllers, ownKey)
+      const failedRecipients = await fanOut(invite, invite.controllers)
       dispatchMessages([invite])
       setSuccess({ invite, failedRecipients })
     } catch (e) {
@@ -92,7 +92,7 @@ export function CreateEscrow () {
     if (success === null) return
     setRetrying(true)
     try {
-      const stillFailed = await fanOut(success.invite, success.failedRecipients, ownKey)
+      const stillFailed = await fanOut(success.invite, success.failedRecipients)
       setSuccess(prev => prev !== null ? { ...prev, failedRecipients: stillFailed } : prev)
     } catch {
       // swallow — failures remain shown

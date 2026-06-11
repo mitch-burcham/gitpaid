@@ -46,7 +46,7 @@ All messages are JSON (auto-encrypted per recipient by `@bsv/message-box-client`
 | `finalized`   | Broadcast succeeded — carries the resulting `txid`. |
 | `cancelled`   | Originator cancelled the escrow via the refund path — carries the `txid`. |
 
-Clients load state on startup via `listMessages({ messageBox: 'crowd' })` and stay live with `listenForLiveMessages`. If the relay does not support websockets (the current gmb deployment does not), the app silently falls back to polling the inbox every 15 seconds over HTTP. Acknowledged messages are persisted to `localStorage` keyed by the user's own identity key.
+MessageBox is the single source of truth: every message is fanned out to all controllers INCLUDING the sender (your own box holds the durable record of your own actions), messages are never acknowledged on read, and clients rebuild state from `listMessages({ messageBox: 'crowd' })` on every load. Live updates come from `listenForLiveMessages`; if the relay does not support websockets (the current gmb deployment does not), the app silently falls back to re-reading the inbox every 15 seconds over HTTP. Acknowledging — which deletes messages from the relay — is used only as garbage collection when the user clears cancelled escrows.
 
 ### Share links
 
@@ -92,7 +92,7 @@ src/
     CrowdEscrow.ts    # ScriptTemplate: lock, unlockMultisig, unlockCancel, sighash helper
     escrow.ts         # createEscrow, buildProposal, signProposal, verifySignature, finalizeProposal, cancelEscrow
     protocol.ts       # CrowdMessage types, type guards, invite encode/decode, protocol constants
-    store.ts          # Event-sourced reducer over CrowdMessage; localStorage persistence
+    store.ts          # Pure event-sourced reducer over CrowdMessage (state rebuilt from the relay)
     messages.ts       # MessageBoxClient wrapper: 'crowd' box, fan-out send, live listener
     identity.ts       # IdentityClient wrappers + cache
     wallet.ts         # Singleton WalletClient, getOwnIdentityKey

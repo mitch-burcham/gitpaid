@@ -61,8 +61,8 @@ export function ProposeForm ({ invite, defaultOpen = false }: Props) {
         signer: ownKey,
         sigHex,
       }
-      const failedProposal = await fanOut(proposal, invite.controllers, ownKey)
-      const failedSig = await fanOut(sigMsg, invite.controllers, ownKey)
+      const failedProposal = await fanOut(proposal, invite.controllers)
+      const failedSig = await fanOut(sigMsg, invite.controllers)
       const failed = [...new Set([...failedProposal, ...failedSig])]
       setSendFailures(failed.length > 0 ? { recipients: failed, msgs: [proposal, sigMsg] } : null)
       dispatchMessages([proposal, sigMsg])
@@ -84,7 +84,7 @@ export function ProposeForm ({ invite, defaultOpen = false }: Props) {
     try {
       const stillFailed = new Set<string>()
       for (const msg of sendFailures.msgs) {
-        for (const r of await fanOut(msg, sendFailures.recipients, ownKey)) stillFailed.add(r)
+        for (const r of await fanOut(msg, sendFailures.recipients)) stillFailed.add(r)
       }
       setSendFailures(stillFailed.size > 0
         ? { recipients: [...stillFailed], msgs: sendFailures.msgs }

@@ -1,27 +1,13 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import {
   emptyState,
   reduce,
-  loadState,
-  saveState,
-  applyAndSave,
+  applyMessages,
   removeCancelledEscrows,
-  removeCancelledAndSave,
   type EscrowState,
 } from './store'
 import type { InviteMsg, ProposalMsg, SignatureMsg, VetoMsg, FinalizedMsg, CancelledMsg } from './protocol'
 import { isCrowdMessage } from './protocol'
-
-// Polyfill localStorage for Node (vitest runs in node by default)
-if (typeof localStorage === 'undefined') {
-  const store = new Map<string, string>()
-  ;(globalThis as unknown as Record<string, unknown>).localStorage = {
-    getItem: (k: string) => store.get(k) ?? null,
-    setItem: (k: string, v: string) => { store.set(k, v) },
-    removeItem: (k: string) => { store.delete(k) },
-    clear: () => { store.clear() },
-  }
-}
 
 // --- fixture helpers ---
 
@@ -291,76 +277,23 @@ describe('purity', () => {
   })
 })
 
-describe('localStorage helpers', () => {
-  const OWN_KEY = 'testkey_abc'
-
-  beforeEach(() => {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem(`crowd:${OWN_KEY}`)
-    }
-  })
-
-  afterEach(() => {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem(`crowd:${OWN_KEY}`)
-    }
-  })
-
-  it('loadState returns emptyState when key is missing', () => {
-    const s = loadState(OWN_KEY)
-    expect(s).toEqual(emptyState)
-  })
-
-  it('saveState and loadState roundtrip', () => {
-    const s1 = reduce(emptyState, makeInvite())
-    saveState(OWN_KEY, s1)
-    const loaded = loadState(OWN_KEY)
-    expect(loaded).toEqual(s1)
-  })
-
-  it('loadState returns emptyState on corrupt JSON', () => {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(`crowd:${OWN_KEY}`, 'not json {{{')
-    }
-    const s = loadState(OWN_KEY)
-    expect(s).toEqual(emptyState)
-  })
-})
-
-describe('applyAndSave', () => {
-  const OWN_KEY = 'applykey_xyz'
-
-  beforeEach(() => {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem(`crowd:${OWN_KEY}`)
-    }
-  })
-
-  afterEach(() => {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem(`crowd:${OWN_KEY}`)
-    }
-  })
-
-  it('folds multiple messages in order and persists result', () => {
+describe('applyMessages', () => {
+  it('folds multiple messages in order', () => {
     const msgs = [
       makeInvite(),
       makeProposal(),
       makeSig(CONTROLLERS[0]),
       makeSig(CONTROLLERS[1]),
     ]
-    const result = applyAndSave(OWN_KEY, emptyState, msgs)
+    const result = applyMessages(emptyState, msgs)
     const sigs = result.escrows['deadbeef.0'].proposals['prop001'].signatures
     expect(sigs[CONTROLLERS[0]]).toBeDefined()
     expect(sigs[CONTROLLERS[1]]).toBeDefined()
-    // verify it was saved
-    const loaded = loadState(OWN_KEY)
-    expect(loaded).toEqual(result)
   })
 
-  it('returns current state unchanged when messages array is empty', () => {
+  it('returns equivalent state when messages array is empty', () => {
     const s1 = reduce(emptyState, makeInvite())
-    const result = applyAndSave(OWN_KEY, s1, [])
+    const result = applyMessages(s1, [])
     expect(result).toEqual(s1)
   })
 })
@@ -386,32 +319,6 @@ describe('removeCancelledEscrows', () => {
     const s1 = reduce(emptyState, makeInvite())
     const next = removeCancelledEscrows(s1)
     expect(next).toBe(s1)
-  })
-})
-
-describe('removeCancelledAndSave', () => {
-  const OWN_KEY = 'remove_cancelled_key'
-
-  beforeEach(() => {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem(`crowd:${OWN_KEY}`)
-    }
-  })
-
-  afterEach(() => {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem(`crowd:${OWN_KEY}`)
-    }
-  })
-
-  it('persists the pruned state', () => {
-    const s1 = reduce(emptyState, makeInvite({ escrowId: 'keep.0' }))
-    const s2 = reduce(s1, makeInvite({ escrowId: 'gone.0' }))
-    const s3 = reduce(s2, makeCancelled({ escrowId: 'gone.0', txid: 'tx1' }))
-
-    const next = removeCancelledAndSave(OWN_KEY, s3)
-    expect(Object.keys(next.escrows)).toEqual(['keep.0'])
-    expect(loadState(OWN_KEY)).toEqual(next)
   })
 })
 
@@ -456,10 +363,8 @@ describe('isCrowdMessage', () => {
 })
 
 describe('orphan buffering (out-of-order delivery)', () => {
-  const OWN_KEY = 'orphan_test_key'
-
   it('applies a full batch delivered in reverse order (signature, proposal, invite)', () => {
-    const result = applyAndSave(OWN_KEY, emptyState, [
+    const result = applyMessages(emptyState, [
       makeSig(CONTROLLERS[0]),
       makeProposal(),
       makeInvite(),
@@ -473,11 +378,11 @@ describe('orphan buffering (out-of-order delivery)', () => {
   })
 
   it('holds orphans in pending across batches and applies them when the parent arrives', () => {
-    const s1 = applyAndSave(OWN_KEY, emptyState, [makeProposal(), makeSig(CONTROLLERS[1])])
+    const s1 = applyMessages(emptyState, [makeProposal(), makeSig(CONTROLLERS[1])])
     expect(Object.keys(s1.escrows)).toHaveLength(0)
     expect(s1.pending).toHaveLength(2)
 
-    const s2 = applyAndSave(OWN_KEY, s1, [makeInvite()])
+    const s2 = applyMessages(s1, [makeInvite()])
     const ps = s2.escrows['deadbeef.0'].proposals['prop001']
     expect(ps).toBeDefined()
     expect(ps.signatures[CONTROLLERS[1]]).toBeDefined()
@@ -485,7 +390,7 @@ describe('orphan buffering (out-of-order delivery)', () => {
   })
 
   it('does not buffer invalid messages (signature from a non-controller)', () => {
-    const result = applyAndSave(OWN_KEY, emptyState, [
+    const result = applyMessages(emptyState, [
       makeInvite(),
       makeProposal(),
       makeSig('not-a-controller'),
@@ -495,15 +400,8 @@ describe('orphan buffering (out-of-order delivery)', () => {
   })
 
   it('dedupes identical orphans across batches', () => {
-    const s1 = applyAndSave(OWN_KEY, emptyState, [makeProposal()])
-    const s2 = applyAndSave(OWN_KEY, s1, [makeProposal()])
+    const s1 = applyMessages(emptyState, [makeProposal()])
+    const s2 = applyMessages(s1, [makeProposal()])
     expect(s2.pending).toHaveLength(1)
-  })
-
-  it('persists pending to localStorage and reloads it', () => {
-    const s1 = applyAndSave(OWN_KEY, emptyState, [makeProposal()])
-    expect(s1.pending).toHaveLength(1)
-    const loaded = loadState(OWN_KEY)
-    expect(loaded.pending).toHaveLength(1)
   })
 })

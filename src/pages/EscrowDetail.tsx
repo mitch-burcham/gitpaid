@@ -76,7 +76,7 @@ export function EscrowDetail () {
     try {
       const txid = await cancelEscrow(invite)
       const msg: CancelledMsg = { type: 'cancelled', escrowId, txid }
-      await fanOut(msg, invite.controllers, ownKey)
+      await fanOut(msg, invite.controllers)
       dispatchMessages([msg])
     } catch (e) {
       setCancelError(e instanceof Error ? e.message : String(e))
