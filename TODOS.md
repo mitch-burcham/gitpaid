@@ -23,3 +23,19 @@
 - **Cons:** Needs a willing repo + seeded sats.
 - **Context:** Strategic, not eng — belongs to `/plan-ceo-review` + `/alpha-code path-to-revenue`. Eng scope stays full-v1 per D2 (2026-06-11).
 - **Depends on:** Anything installable (post first extension build).
+
+## TODO-004 — Agent reputation per identity key (P2, deferred at CEO review D15)
+- **What:** `findByIdentityKey` aggregation on the lookup node (claims made, bounties won, sats earned), surfaced in sponsor claim lists ("this agent completed 14 bounties").
+- **Why:** Claim-spam's eventual fix + the sponsor's selection signal when multiple agents claim.
+- **Pros:** Read-only aggregation over data the node already stores; directly monetizable signal later.
+- **Cons:** Reputation-gaming surface; premature before claim volume exists.
+- **Context:** Deferred 2026-06-12 (CEO review, agent-first pivot). v1 claim lists show PR links + GitHub state only; per-identity claim cap (FR-016) bounds spam until then.
+- **Effort:** M (human) → S (CC). **Depends on:** real claim volume.
+
+## TODO-005 — x402-style HTTP discovery bridge (P3)
+- **What:** Paid HTTP endpoint speaking the emerging agent-payment protocols (x402 / MPP / AP2), bridging to `ls_gitpaid` for programmatic bounty discovery.
+- **Why:** Meets agents on the rails the industry is converging on (Stripe, Coinbase, Google all shipping in 2026).
+- **Pros:** Distribution into every x402-capable agent stack.
+- **Cons:** Protocol race unsettled — wrong horse = wasted bridge.
+- **Context:** Captured 2026-06-12 with a named trigger: re-evaluate when one protocol clearly wins. v1 discovery = npm CLI/MCP + overlay polling.
+- **Effort:** M. **Depends on:** v1 shipped + protocol convergence.
