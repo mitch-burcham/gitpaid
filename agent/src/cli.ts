@@ -12,10 +12,17 @@
  */
 import { Command } from 'commander'
 import { spawn, spawnSync } from 'node:child_process'
-import { WalletClient, HTTPWalletJSON } from '@bsv/sdk'
+import { WalletClient, HTTPWalletJSON, Utils } from '@bsv/sdk'
 import { MessageBoxClient } from '@bsv/message-box-client'
+import { BINDING_VERSION } from '@engine/binding'
+import {
+  createGitPaidEscrow, releaseSoloBounty, submitToOverlay, GITPAID_BOX,
+  type GitPaidInvite,
+} from '@engine/gitpaidEscrowOps'
 import { GitPaidAgentClient, DEFAULT_WALLET_URL, type BountyInfo } from './core.js'
 import { runMcpServer } from './mcp.js'
+import { buildSponsorState, type AcceptMsg, type SponsorState } from './sponsor.js'
+import { runAutoreleaseOnce } from './autorelease.js'
 
 const OVERLAY_URL = process.env.GITPAID_OVERLAY_URL ?? 'http://localhost:8080'
 const WALLET_URL = process.env.GITPAID_WALLET_URL ?? DEFAULT_WALLET_URL
@@ -241,6 +248,185 @@ program
   .description('Run the GitPaid MCP server on stdio (for Claude-class agents)')
   .action(async () => {
     await runMcpServer(makeClient(true))
+  })
+
+// ── sponsor-side commands (FR-021/FR-022) ──────────────────────────────────
+
+function makeMbx (wallet: WalletClient): MessageBoxClient {
+  return new MessageBoxClient({ walletClient: wallet, host: MESSAGEBOX_HOST })
+}
+
+async function loadSponsorState (wallet: WalletClient): Promise<{ state: SponsorState, ownKey: string, mbx: MessageBoxClient }> {
+  const mbx = makeMbx(wallet)
+  const { publicKey } = await wallet.getPublicKey({ identityKey: true })
+  const messages = await mbx.listMessages({ messageBox: GITPAID_BOX })
+  return { state: buildSponsorState(messages, publicKey), ownKey: publicKey, mbx }
+}
+
+/** Resolve immutable GitHub IDs for the binding (TR-007). */
+async function resolveIssue (slug: string, issueNumber: number, ghToken?: string): Promise<{ repoId: number, issueId: number }> {
+  const headers = {
+    Accept: 'application/vnd.github+json',
+    ...(ghToken !== undefined ? { Authorization: `Bearer ${ghToken}` } : {}),
+  }
+  const repoRes = await fetch(`https://api.github.com/repos/${slug}`, { headers })
+  if (!repoRes.ok) throw new Error(`GitHub repo lookup failed: HTTP ${repoRes.status}`)
+  const repo = await repoRes.json() as { id: number }
+  const issueRes = await fetch(`https://api.github.com/repos/${slug}/issues/${issueNumber}`, { headers })
+  if (!issueRes.ok) throw new Error(`GitHub issue lookup failed: HTTP ${issueRes.status}`)
+  const issue = await issueRes.json() as { id: number }
+  return { repoId: repo.id, issueId: issue.id }
+}
+
+program
+  .command('post <slug> <issueNumber> <satoshis>')
+  .description('Post a bounty on a GitHub issue (sponsor): lock sats in escrow + broadcast to the overlay')
+  .option('--controller <identityKey...>', 'additional controller identity keys (default: sponsor-only 1-of-1)')
+  .option('--threshold <n>', 'signatures required to release (default 1)')
+  .action(async (slug: string, issueNumber: string, satoshis: string, opts: { controller?: string[], threshold?: string }) => {
+    const wallet = makeWallet()
+    const { repoId, issueId } = await resolveIssue(slug, Number(issueNumber), process.env.GITPAID_GITHUB_TOKEN)
+    const { publicKey } = await wallet.getPublicKey({ identityKey: true })
+
+    const invite = await createGitPaidEscrow({
+      satoshis: Number(satoshis),
+      threshold: Number(opts.threshold ?? 1),
+      controllerIdentityKeys: opts.controller ?? [],
+      binding: {
+        version: BINDING_VERSION,
+        repoId,
+        issueId,
+        issueNumber: Number(issueNumber),
+        funderIdentityKey: publicKey,
+        slug,
+      },
+    }, wallet)
+
+    // Overlay admittance (FR-011) — the bounty becomes globally discoverable
+    await submitToOverlay(OVERLAY_URL, Utils.toArray(invite.beef, 'hex'))
+
+    // Durable record + controller invites, Crowd-style fan-out incl. self
+    const mbx = makeMbx(wallet)
+    const body = JSON.stringify(invite)
+    for (const recipient of new Set([publicKey, ...invite.controllers])) {
+      await mbx.sendMessage({ recipient, messageBox: GITPAID_BOX, body }).catch(() => {})
+    }
+
+    console.log(`bounty posted: ${invite.satoshis} sats on ${untrusted(slug)}#${issueNumber}`)
+    console.log(`  escrow  ${invite.escrowId}`)
+    console.log(`  ${invite.threshold}-of-${invite.controllers.length} ${invite.controllers.length >= 2 ? 'PROTECTED' : 'REVOCABLE'}`)
+  })
+
+program
+  .command('claims')
+  .description('List claims received on your bounties (sponsor)')
+  .action(async () => {
+    const { state } = await loadSponsorState(makeWallet())
+    if (state.claims.length === 0) {
+      console.log('no claims received')
+      return
+    }
+    for (const c of state.claims) {
+      const accepted = state.accepts.get(c.escrowId)?.claimantIdentityKey === c.claimantIdentityKey
+      console.log(`${accepted ? 'ACCEPTED' : 'pending '} ${c.satoshis} sats  ${c.escrowId}`)
+      console.log(`         claimant ${c.claimantIdentityKey}`)
+      console.log(`         pr ${untrusted(c.prUrl)}${c.note !== '' ? `  note ${untrusted(c.note)}` : ''}`)
+    }
+  })
+
+program
+  .command('accept <escrowId> <claimantIdentityKey>')
+  .description('Accept a claim (sponsor): records the winner; release on merge (autorelease) or via `gitpaid release`')
+  .action(async (escrowId: string, claimantIdentityKey: string) => {
+    const { state, ownKey, mbx } = await loadSponsorState(makeWallet())
+    const claim = state.claims.find(c => c.escrowId === escrowId && c.claimantIdentityKey === claimantIdentityKey)
+    if (claim === undefined) {
+      console.error(`no claim from ${claimantIdentityKey} on ${escrowId}`)
+      process.exitCode = 1
+      return
+    }
+    const accept: AcceptMsg = { type: 'accept', escrowId, claimantIdentityKey, prUrl: claim.prUrl, createdAt: Date.now() }
+    const body = JSON.stringify(accept)
+    await mbx.sendMessage({ recipient: ownKey, messageBox: GITPAID_BOX, body })
+    await mbx.sendMessage({ recipient: claimantIdentityKey, messageBox: GITPAID_BOX, body }).catch(() => {})
+    console.log(`accepted ${claimantIdentityKey} for ${escrowId} — release with \`gitpaid release ${escrowId}\` or run \`gitpaid autorelease\``)
+  })
+
+program
+  .command('release <escrowId>')
+  .description('Release a 1-of-1 bounty to its accepted claimant now (sponsor)')
+  .action(async (escrowId: string) => {
+    const { state } = await loadSponsorState(makeWallet())
+    const invite = state.invites.get(escrowId)
+    const accept = state.accepts.get(escrowId)
+    if (invite === undefined) {
+      console.error(`no bounty ${escrowId} found in your records`)
+      process.exitCode = 1
+      return
+    }
+    if (accept === undefined) {
+      console.error(`no accepted claim on ${escrowId} — run \`gitpaid claims\` then \`gitpaid accept\``)
+      process.exitCode = 1
+      return
+    }
+    const { txid } = await releaseSoloBounty(invite, accept.claimantIdentityKey)
+    console.log(`released — payout tx ${txid} to ${accept.claimantIdentityKey}`)
+    console.log('overlay eviction: client-submitted spends evict immediately; the hourly sweep backstops the rest')
+  })
+
+program
+  .command('autorelease')
+  .description('Daemon: release accepted 1-of-1 bounties when their PR merges (PAT via GITPAID_GITHUB_TOKEN env, TR-010)')
+  .option('--interval <seconds>', 'poll interval', '60')
+  .option('--once', 'run a single tick and exit')
+  .action(async (opts: { interval: string, once?: boolean }) => {
+    const wallet = makeWallet()
+    const ghToken = process.env.GITPAID_GITHUB_TOKEN
+    const intervalMs = Math.max(30, Number(opts.interval)) * 1000
+
+    const tick = async (): Promise<void> => {
+      const { state } = await loadSponsorState(wallet)
+      const pending = [...state.accepts.values()]
+        .filter(a => state.invites.has(a.escrowId))
+        .map(a => {
+          const invite = state.invites.get(a.escrowId) as GitPaidInvite
+          return {
+            escrowId: a.escrowId,
+            claimantIdentityKey: a.claimantIdentityKey,
+            prUrl: a.prUrl,
+            threshold: invite.threshold,
+            controllers: invite.controllers.length,
+          }
+        })
+
+      const results = await runAutoreleaseOnce({
+        pending,
+        ghToken,
+        release: async (escrowId, claimant) => {
+          const invite = state.invites.get(escrowId) as GitPaidInvite
+          return await releaseSoloBounty(invite, claimant)
+        },
+      })
+      for (const r of results) {
+        if (r.outcome !== 'unmerged') {
+          console.log(`[${new Date().toISOString()}] ${r.escrowId}: ${r.outcome}${r.detail !== undefined ? ` (${r.detail})` : ''}`)
+        }
+      }
+    }
+
+    if (opts.once === true) {
+      await tick()
+      return
+    }
+    console.log(`autorelease watching (every ${intervalMs / 1000}s, ^C to stop)${ghToken === undefined ? ' — no GITPAID_GITHUB_TOKEN set, public repos only' : ''}`)
+    for (;;) {
+      try {
+        await tick()
+      } catch (err) {
+        console.error(`tick failed: ${err instanceof Error ? err.message : String(err)} — retrying`)
+      }
+      await new Promise(r => setTimeout(r, intervalMs))
+    }
   })
 
 program.parseAsync().catch((err: unknown) => {

@@ -17,5 +17,8 @@ export default defineConfig({
   },
   test: {
     passWithNoTests: true,
+    // GitPaid workspaces run their own vitest configs (they need the
+    // @engine alias); keep the root runner scoped to the app + engine.
+    exclude: ['**/node_modules/**', 'backend/**', 'agent/**'],
   },
 })
