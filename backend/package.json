@@ -1,0 +1,19 @@
+{
+  "name": "@gitpaid/backend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@bsv/overlay": "^2.0.3",
+    "@bsv/sdk": "^2.1.4",
+    "mongodb": "^6.10.0"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.2",
+    "vitest": "^4.1.8"
+  }
+}
