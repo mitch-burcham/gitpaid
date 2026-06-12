@@ -41,7 +41,7 @@ export function isGitPaidInvite (v: unknown): v is GitPaidInvite {
 export interface SponsorState {
   /** escrowId → invite (our posted bounties). */
   invites: Map<string, GitPaidInvite>
-  /** Claims received, newest first. */
+  /** Claims received, newest first — capped to ONE per (escrow, claimant). */
   claims: ClaimMsg[]
   /** escrowId → accepted claim (latest accept wins). */
   accepts: Map<string, AcceptMsg>
@@ -59,6 +59,10 @@ export function buildSponsorState (
   ownIdentityKey: string,
 ): SponsorState {
   const state: SponsorState = { invites: new Map(), claims: [], accepts: new Map() }
+  // Claim cap (FR-016): one claim per (escrow, claimant), latest wins —
+  // bounds spam from any single identity key; key-minting floods are
+  // bounded by the reputation layer later (TODO-004).
+  const claimsByKey = new Map<string, ClaimMsg>()
 
   for (const m of messages) {
     const body = typeof m.body === 'string' ? safeParse(m.body) : m.body
@@ -72,11 +76,15 @@ export function buildSponsorState (
         state.accepts.set(body.escrowId, body)
       }
     } else if (isClaimMsg(body) && m.sender === body.claimantIdentityKey) {
-      state.claims.push(body)
+      const key = `${body.escrowId}|${body.claimantIdentityKey}`
+      const existing = claimsByKey.get(key)
+      if (existing === undefined || body.createdAt > existing.createdAt) {
+        claimsByKey.set(key, body)
+      }
     }
   }
 
-  state.claims.sort((a, b) => b.createdAt - a.createdAt)
+  state.claims = [...claimsByKey.values()].sort((a, b) => b.createdAt - a.createdAt)
   return state
 }
 

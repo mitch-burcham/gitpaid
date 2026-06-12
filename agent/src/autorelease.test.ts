@@ -139,6 +139,21 @@ describe('buildSponsorState (SR-006-adjacent sender validation)', () => {
     expect(state.claims[0].claimantIdentityKey).toBe(claimant)
   })
 
+  it('claim cap (FR-016/TC-012): one claim per (escrow, claimant), latest wins; distinct claimants kept', () => {
+    const spam = Array.from({ length: 50 }, (_, i) => ({
+      body: JSON.stringify({ ...claim, note: `spam ${i}`, createdAt: 100 + i }),
+      sender: claimant,
+    }))
+    const otherClaimant = { ...claim, claimantIdentityKey: sponsor, createdAt: 5 }
+    const state = buildSponsorState([
+      ...spam,
+      { body: JSON.stringify(otherClaimant), sender: sponsor },
+    ], sponsor)
+    expect(state.claims).toHaveLength(2) // 50 spam collapse to 1 + 1 distinct claimant
+    const mine = state.claims.find(c => c.claimantIdentityKey === claimant)
+    expect(mine?.note).toBe('spam 49') // latest wins
+  })
+
   it('latest accept per escrow wins', () => {
     const later = { ...accept, claimantIdentityKey: 'newer-claimant', createdAt: 9 }
     const state = buildSponsorState([
