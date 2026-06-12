@@ -1,0 +1,46 @@
+# GitPaid CI floor (TRD §10): lint + type + unit on every commit;
+# built-artifact e2e smoke included (TC-020 partial).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck (app + engine)
+        run: npx tsc -b
+
+      - name: Typecheck (backend)
+        run: npx tsc --noEmit -p backend
+
+      - name: Typecheck (agent)
+        run: npx tsc --noEmit -p agent
+
+      - name: Unit tests — app + engine
+        run: npm test
+
+      - name: Unit tests — backend
+        run: npm test -w backend
+
+      - name: Unit tests — agent
+        run: npm test -w agent
+
+      - name: Build agent CLI (bundles engine)
+        run: npm run build -w agent
+
+      - name: E2E smoke — built CLI vs mock overlay
+        run: npx vitest run e2e --root agent

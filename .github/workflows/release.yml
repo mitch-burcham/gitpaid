@@ -1,0 +1,47 @@
+# npm publish pipeline for the `gitpaid` agent package (OR-006).
+# Trigger: push a tag like agent-v0.1.0.
+# Requires the NPM_TOKEN repository secret (npm automation token).
+name: Release agent package
+
+on:
+  push:
+    tags: ['agent-v*']
+
+permissions:
+  contents: read
+  id-token: write # npm provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install
+        run: npm ci
+
+      - name: Test (full agent suite incl. e2e)
+        run: |
+          npm test -w agent
+          npm run build -w agent
+          npx vitest run e2e --root agent
+
+      - name: Verify tag matches package version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#agent-v}"
+          PKG_VERSION=$(node -p "require('./agent/package.json').version")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "tag $TAG_VERSION != package.json $PKG_VERSION" >&2
+            exit 1
+          fi
+
+      - name: Publish
+        run: npm publish -w agent --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
