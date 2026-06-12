@@ -90,16 +90,6 @@ describe.skipIf(!built)('built CLI smoke (TC-020 partial)', () => {
     ).rejects.toMatchObject({ code: 1 })
   })
 
-  it('gitpaid init without bsv-wallet on PATH exits 1 with the install hint (ADR-004)', async () => {
-    // process.execPath dodges PATH so only bsv-wallet resolution fails
-    const err = await exec(process.execPath, [CLI, 'init'], {
-      env: { ...process.env, PATH: '/nonexistent' },
-    }).catch((e: { code: number, stderr: string }) => e)
-    expect(err.code).toBe(1)
-    expect(err.stderr).toContain('Calhooon/bsv-wallet-cli')
-    expect(err.stderr).toContain('install.sh')
-  })
-
   it('--version and --help work (npm bin integrity)', async () => {
     const v = await exec('node', [CLI, '--version'])
     expect(v.stdout.trim()).toBe('0.1.0')

@@ -22,6 +22,7 @@
 import {
   Transaction,
   PublicKey,
+  LockingScript,
   UnlockingScript,
   P2PKH,
   Utils,
@@ -177,26 +178,25 @@ export async function submitToOverlay (
 export type PaymentNotifier = (args: { recipient: string, messageBox: string, body: string }) => Promise<unknown>
 
 /**
- * Release a 1-of-1 bounty to a claimant (FR-021/FR-022): propose → self-sign
- * → broadcast in one call, against the INJECTED wallet.
+ * Release a 1-of-1 bounty to a claimant (FR-021/FR-022).
  *
- * Why this doesn't delegate to the engine's buildProposal/signProposal/
- * finalizeProposal: those bind to the `@engine/wallet` module singleton
- * (`WalletClient('auto', …)`, Metanet-Desktop :3321). GitPaid's wallet is
- * bsv-wallet-cli on :3322 (ADR-004) — a DIFFERENT wallet, different keys.
- * The live system test caught the resulting signature mismatch. The pure
- * helpers (proposalTx / escrowInputIndex / escrowLockingScript /
- * verifySignature) take no wallet and ARE reused; only the three
- * wallet-touching steps are reimplemented here, wallet-injected.
+ * This mirrors Crowd's `escrow.ts` finalizeProposal LINE-FOR-LINE — the
+ * working professional flow: build a BRC-29 recipient output, sign the escrow
+ * input (SIGHASH_SINGLE|ANYONECANPAY), then `wallet.createAction` with the
+ * escrow input + recipient output. The wallet adds funding inputs (it pays the
+ * network fee) and change, broadcasts, and returns the FINAL signed tx as
+ * `result.tx`. The payment token carries THAT `result.tx` — never a re-
+ * serialized object — so the recipient internalizes the exact broadcast tx.
  *
- * Multi-controller escrows release through the normal Crowd coordination flow
- * (proposals + N signatures over MessageBox).
+ * The ONLY change from Crowd: the wallet + relay are injected (Crowd's engine
+ * binds a module singleton at :3321; GitPaid's wallet is bsv-wallet-cli at
+ * :3322, ADR-004). Logic is otherwise identical.
  */
 export async function releaseSoloBounty (
   invite: GitPaidInvite,
   recipientIdentityKey: string,
-  opts: { wallet?: WalletInterface, note?: string, notifyPayment?: PaymentNotifier, feeSats?: number } = {},
-): Promise<{ txid: string }> {
+  opts: { wallet?: WalletInterface, note?: string, notifyPayment?: PaymentNotifier } = {},
+): Promise<{ txid: string, spendBeef?: number[] }> {
   if (invite.threshold !== 1 || invite.controllers.length !== 1) {
     throw new Error(
       'releaseSoloBounty only handles 1-of-1 escrows — multi-controller release goes through proposal coordination',
@@ -205,7 +205,7 @@ export async function releaseSoloBounty (
   const wallet = opts.wallet ?? defaultWallet
   const ownKey = (await wallet.getPublicKey({ identityKey: true })).publicKey
 
-  // ── 1. Build the proposal skeleton: escrow input + BRC-29 recipient output ──
+  // ── buildProposal (escrow.ts): BRC-29 recipient output, full escrow amount ──
   const derivationPrefix = Utils.toBase64(Random(16))
   const derivationSuffix = Utils.toBase64(Random(16))
   const derived = await wallet.getPublicKey({
@@ -215,21 +215,11 @@ export async function releaseSoloBounty (
   })
   const recipientLock = new P2PKH().lock(PublicKey.fromString(derived.publicKey).toAddress())
 
-  // Fee comes out of the bounty (the escrow output self-funds the spend).
-  // bsv-wallet-cli's createAction does not credit a foreign escrow input's
-  // value toward outputs (the live system test proved this — it tried to
-  // fund the full payout from the sponsor's own balance), so GitPaid builds,
-  // signs, and broadcasts the release tx directly: escrow in → payout out,
-  // payout = satoshis − fee, no wallet-funded inputs, no change.
-  const feeSats = opts.feeSats ?? 50
-  const payout = invite.satoshis - feeSats
-  if (payout <= 0) throw new Error(`releaseSoloBounty: bounty ${invite.satoshis} sats too small to cover the ${feeSats}-sat fee`)
-
   const fundingTx = Transaction.fromAtomicBEEF(Utils.toArray(invite.beef, 'hex'))
   const vout = Number(invite.escrowId.split('.')[1])
   const skeleton = new Transaction()
   skeleton.addInput({ sourceTransaction: fundingTx, sourceOutputIndex: vout, unlockingScript: new UnlockingScript(), sequence: 0xffffffff })
-  skeleton.addOutput({ lockingScript: recipientLock, satoshis: payout })
+  skeleton.addOutput({ lockingScript: recipientLock, satoshis: invite.satoshis })
 
   const proposal: ProposalMsg = {
     type: 'proposal',
@@ -242,11 +232,10 @@ export async function releaseSoloBounty (
     createdAt: Date.now(),
   }
 
-  // ── 2. Sign the escrow input with our multisig key (INJECTED wallet) ──
+  // ── signProposal (escrow.ts): SIGHASH_SINGLE|ANYONECANPAY over the escrow input ──
   const tx = proposalTx(invite, proposal)
   const lockScript = escrowLockingScript(invite)
-  const inputIdx = escrowInputIndex(invite, tx)
-  const hash = CrowdEscrow.sighash(tx, inputIdx, lockScript, invite.satoshis, SIGHASH_SCOPE_SINGLE_ACP)
+  const hash = CrowdEscrow.sighash(tx, escrowInputIndex(invite, tx), lockScript, invite.satoshis, SIGHASH_SCOPE_SINGLE_ACP)
   const sigResult = await wallet.createSignature({
     hashToDirectlySign: hash,
     protocolID: MULTISIG_PROTOCOL,
@@ -254,36 +243,41 @@ export async function releaseSoloBounty (
     counterparty: 'self', // 1-of-1: originator signs as self
   })
   const sigHex = Utils.toHex(CrowdEscrow.toChecksigFormat(sigResult.signature, SIGHASH_SCOPE_SINGLE_ACP))
-
-  // Self-check before broadcast — the live test's lesson: prove it, don't assume.
   if (!verifySignature(invite, proposal, ownKey, sigHex)) {
     throw new Error('releaseSoloBounty: own signature failed verification — wallet/key mismatch')
   }
 
-  // ── 3. Attach the unlock + broadcast directly (escrow self-funds) ──
-  const pubKeyObjects = invite.pubkeys.map(p => PublicKey.fromString(p))
-  tx.inputs[inputIdx].unlockingScript = CrowdEscrow.unlockMultisig([Utils.toArray(sigHex, 'hex')], pubKeyObjects)
+  // ── finalizeProposal (escrow.ts): createAction broadcasts; result.tx is the
+  //    real signed BEEF the recipient internalizes. Wallet funds the fee + change. ──
+  const unlockScript = CrowdEscrow.unlockMultisig([Utils.toArray(sigHex, 'hex')], invite.pubkeys.map(p => PublicKey.fromString(p)))
+  const recipientOutput = tx.outputs[0]
 
-  const bcast = await tx.broadcast()
-  if (bcast.status === 'error') {
-    throw new Error(`releaseSoloBounty: broadcast failed — ${bcast.description ?? bcast.code ?? 'unknown'}`)
-  }
-  const txid = bcast.txid ?? tx.id('hex')
+  const result = await wallet.createAction({
+    description: 'Release GitPaid bounty',
+    inputBEEF: Utils.toArray(invite.beef, 'hex'),
+    inputs: [{ outpoint: invite.escrowId, inputDescription: 'Bounty escrow release', unlockingScript: unlockScript.toHex(), sequenceNumber: 0xffffffff }],
+    outputs: [{ lockingScript: (recipientOutput.lockingScript as LockingScript).toHex(), satoshis: recipientOutput.satoshis ?? invite.satoshis, outputDescription: 'Bounty payout' }],
+    options: { randomizeOutputs: false, acceptDelayedBroadcast: false },
+  })
 
-  // ── 4. Notify the recipient's payment inbox so `gitpaid receive` lands it ──
-  if (opts.notifyPayment !== undefined) {
+  const txid = result.txid ?? (result.tx != null ? Transaction.fromAtomicBEEF(result.tx).id('hex') : undefined)
+  if (txid === undefined) throw new Error('releaseSoloBounty: wallet returned no txid for the release')
+
+  // Payment token carries result.tx (the wallet's signed, broadcast BEEF) —
+  // exactly as Crowd does — so the recipient internalizes the real tx.
+  if (opts.notifyPayment !== undefined && result.tx != null) {
     await opts.notifyPayment({
       recipient: recipientIdentityKey,
       messageBox: STANDARD_PAYMENT_MESSAGEBOX,
       body: JSON.stringify({
         customInstructions: { derivationPrefix, derivationSuffix },
-        transaction: tx.toAtomicBEEF(),
-        amount: payout,
+        transaction: result.tx,
+        amount: invite.satoshis,
       }),
     }).catch(() => {})
   }
 
-  return { txid }
+  return { txid, spendBeef: result.tx != null ? Array.from(result.tx) : undefined }
 }
 
 /**
