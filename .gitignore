@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# bsv-wallet-cli state — NEVER commit (root key in .env)
+.env
+wallet.db
+wallet.db-shm
+wallet.db-wal
