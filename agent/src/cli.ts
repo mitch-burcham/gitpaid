@@ -13,7 +13,7 @@
 import { Command } from 'commander'
 import { spawn, spawnSync } from 'node:child_process'
 import { WalletClient, HTTPWalletJSON, Utils } from '@bsv/sdk'
-import { MessageBoxClient } from '@bsv/message-box-client'
+import { MessageBoxClient, PeerPayClient } from '@bsv/message-box-client'
 import { BINDING_VERSION } from '@engine/binding'
 import {
   createGitPaidEscrow, releaseSoloBounty, submitToOverlay, GITPAID_BOX,
@@ -242,6 +242,34 @@ program
       console.log(`         pr ${untrusted(claim.prUrl)}`)
     }
     console.log('\nspent = released or cancelled — check your wallet (bsv-wallet balance) for the payout.')
+  })
+
+program
+  .command('receive')
+  .description('Accept incoming peer-payments (bounty payouts) into the wallet — checks all known relays')
+  .action(async () => {
+    const wallet = makeWallet()
+    // Senders deliver payment tokens to THEIR wallet's relay; check every
+    // known host so payouts are never stranded (live-verified 2026-06-12).
+    const hosts = [...new Set([
+      'https://messagebox.babbage.systems',
+      MESSAGEBOX_HOST,
+    ])]
+    let accepted = 0
+    for (const messageBoxHost of hosts) {
+      try {
+        const peerPay = new PeerPayClient({ walletClient: wallet, messageBoxHost })
+        const payments = await peerPay.listIncomingPayments()
+        for (const p of payments) {
+          await peerPay.acceptPayment(p)
+          accepted++
+          console.log(`accepted ${p.token.amount} sats from ${p.sender} (${messageBoxHost})`)
+        }
+      } catch {
+        console.log(`relay unreachable, skipped: ${messageBoxHost}`)
+      }
+    }
+    console.log(accepted === 0 ? 'no pending payments' : `${accepted} payment(s) internalized — check \`bsv-wallet balance\``)
   })
 
 program
