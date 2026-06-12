@@ -381,11 +381,29 @@ program
     console.log(`accepted ${claimantIdentityKey} for ${escrowId} — release with \`gitpaid release ${escrowId}\` or run \`gitpaid autorelease\``)
   })
 
+/**
+ * Release with the INJECTED wallet (ADR-004), notify the claimant's payment
+ * inbox (so `gitpaid receive` lands it), and submit the spend to the overlay
+ * (D10 — immediate eviction, no zombie badge).
+ */
+async function releaseWithPayout (wallet: WalletClient, invite: GitPaidInvite, claimantIdentityKey: string): Promise<{ txid: string }> {
+  const peerPay = new PeerPayClient({ walletClient: wallet, messageBoxHost: 'https://messagebox.babbage.systems' })
+  // Eviction (D10): the release spends the escrow UTXO; the hourly chain-side
+  // reconciliation sweep marks it spent (≤60 min, NFR-005). Direct spend-BEEF
+  // submission to tm_gitpaid is a fast-follow.
+  return await releaseSoloBounty(invite, claimantIdentityKey, {
+    wallet,
+    notifyPayment: async ({ recipient, messageBox, body }) =>
+      await peerPay.sendMessage({ recipient, messageBox, body }),
+  })
+}
+
 program
   .command('release <escrowId>')
   .description('Release a 1-of-1 bounty to its accepted claimant now (sponsor)')
   .action(async (escrowId: string) => {
-    const { state } = await loadSponsorState(makeWallet())
+    const wallet = makeWallet()
+    const { state } = await loadSponsorState(wallet)
     const invite = state.invites.get(escrowId)
     const accept = state.accepts.get(escrowId)
     if (invite === undefined) {
@@ -398,9 +416,9 @@ program
       process.exitCode = 1
       return
     }
-    const { txid } = await releaseSoloBounty(invite, accept.claimantIdentityKey)
+    const { txid } = await releaseWithPayout(wallet, invite, accept.claimantIdentityKey)
     console.log(`released — payout tx ${txid} to ${accept.claimantIdentityKey}`)
-    console.log('overlay eviction: client-submitted spends evict immediately; the hourly sweep backstops the rest')
+    console.log('claimant runs `gitpaid receive` to bank it; overlay drops the badge on spend')
   })
 
 program
@@ -433,7 +451,7 @@ program
         ghToken,
         release: async (escrowId, claimant) => {
           const invite = state.invites.get(escrowId) as GitPaidInvite
-          return await releaseSoloBounty(invite, claimant)
+          return await releaseWithPayout(wallet, invite, claimant)
         },
       })
       for (const r of results) {

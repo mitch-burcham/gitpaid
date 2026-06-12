@@ -1,10 +1,10 @@
 import { describe, it, expect, vi } from 'vitest'
-import { PrivateKey, Transaction, type WalletInterface } from '@bsv/sdk'
+import { PrivateKey, Transaction, Utils, ECDSA, BigNumber, type WalletInterface } from '@bsv/sdk'
 import { GitPaidEscrow } from './GitPaidEscrow'
 import { BINDING_VERSION, type IssueBinding } from './binding'
 import { CROWD_BOX } from './protocol'
 import {
-  createGitPaidEscrow, cancelGitPaidEscrow, submitToOverlay,
+  createGitPaidEscrow, cancelGitPaidEscrow, submitToOverlay, releaseSoloBounty,
   GITPAID_BASKET, GITPAID_BOX, TM_GITPAID,
 } from './gitpaidEscrowOps'
 
@@ -136,5 +136,99 @@ describe('gitpaidEscrowOps (TC-016)', () => {
   it('submitToOverlay throws loudly on overlay errors', async () => {
     const fetchFn = vi.fn(async () => new Response('nope', { status: 500 })) as unknown as typeof fetch
     await expect(submitToOverlay('http://overlay.test', [1], fetchFn)).rejects.toThrow(/500/)
+  })
+})
+
+describe('releaseSoloBounty (regression: live system test 2026-06-12)', () => {
+  // The bug this guards: the original release delegated to the engine's
+  // signProposal, which binds to the @engine/wallet SINGLETON (:3321) — not
+  // the injected GitPaid wallet (:3322). Create derived keys from one wallet,
+  // sign with another → signature never verified. Plus bsv-wallet-cli won't
+  // credit a foreign escrow input, so we broadcast directly.
+
+  it('signs with the INJECTED wallet and broadcasts a self-funded spend', async () => {
+    // A real local keypair so the signature genuinely verifies.
+    const multisigKey = PrivateKey.fromRandom()
+    const recipientKey = PrivateKey.fromRandom().toPublicKey().toString()
+
+    let broadcastTx: Transaction | undefined
+    const wallet = {
+      getPublicKey: async (args: Record<string, unknown>) => {
+        if (args.identityKey === true) return { publicKey: identityKey }
+        // multisig derivation (counterparty 'self') → our real key;
+        // recipient BRC-29 derivation → any key
+        if (Array.isArray(args.protocolID) && args.protocolID[1] === 'multi sig brc29') {
+          return { publicKey: multisigKey.toPublicKey().toString() }
+        }
+        return { publicKey: PrivateKey.fromRandom().toPublicKey().toString() }
+      },
+      createSignature: async (args: { hashToDirectlySign: number[] }) => {
+        // Sign the hash DIRECTLY with the multisig key (what bsv-wallet-cli does)
+        const sig = ECDSA.sign(new BigNumber(args.hashToDirectlySign), multisigKey, true)
+        return { signature: sig.toDER() as number[] }
+      },
+    } as unknown as WalletInterface
+
+    // A funded GitPaidEscrow whose multisig pubkey IS our signing key
+    const lock = GitPaidEscrow.lock([multisigKey.toPublicKey()], 1, PrivateKey.fromRandom().toPublicKey(), binding)
+    const fundingTx = new Transaction()
+    fundingTx.addOutput({ lockingScript: lock, satoshis: 5000 })
+    const invite = {
+      type: 'invite' as const, escrowId: `${fundingTx.id('hex')}.0`,
+      beef: Utils.toHex(fundingTx.toAtomicBEEF()), satoshis: 5000, threshold: 1,
+      keyID: 'k', originator: identityKey, controllers: [identityKey],
+      pubkeys: [multisigKey.toPublicKey().toString()], refundPkh: '', name: 'n', createdAt: 1, binding,
+    }
+
+    // Capture the broadcast instead of hitting the network
+    const origBroadcast = Transaction.prototype.broadcast
+    Transaction.prototype.broadcast = (async function (this: Transaction) {
+      broadcastTx = this
+      return { status: 'success', txid: this.id('hex'), message: 'ok' }
+    }) as typeof Transaction.prototype.broadcast
+    try {
+      let notified: { amount: unknown } | undefined
+      const { txid } = await releaseSoloBounty(invite, recipientKey, {
+        wallet,
+        feeSats: 50,
+        notifyPayment: async ({ body }) => { notified = JSON.parse(body) },
+      })
+      expect(txid).toHaveLength(64)
+      // self-funded: 1 input (escrow), 1 output (payout = 5000 − 50)
+      expect(broadcastTx?.inputs).toHaveLength(1)
+      expect(broadcastTx?.outputs).toHaveLength(1)
+      expect(broadcastTx?.outputs[0].satoshis).toBe(4950)
+      // the escrow input carries a real unlocking script (signature attached)
+      expect(broadcastTx?.inputs[0].unlockingScript?.toHex().length).toBeGreaterThan(0)
+      // recipient gets a payment-token notification for `gitpaid receive`
+      expect(notified?.amount).toBe(4950)
+    } finally {
+      Transaction.prototype.broadcast = origBroadcast
+    }
+  })
+
+  it('rejects multi-controller escrows (1-of-1 only)', async () => {
+    const invite = { type: 'invite' as const, escrowId: 'a.0', beef: '00', satoshis: 5000, threshold: 2,
+      keyID: 'k', originator: identityKey, controllers: [identityKey, otherIdentity], pubkeys: ['p1', 'p2'],
+      refundPkh: '', name: 'n', createdAt: 1, binding }
+    await expect(releaseSoloBounty(invite, otherIdentity, { wallet: {} as WalletInterface }))
+      .rejects.toThrow(/1-of-1/)
+  })
+
+  it('rejects a bounty too small to cover the fee', async () => {
+    const multisigKey = PrivateKey.fromRandom()
+    const wallet = {
+      getPublicKey: async (a: Record<string, unknown>) => a.identityKey === true
+        ? { publicKey: identityKey } : { publicKey: multisigKey.toPublicKey().toString() },
+    } as unknown as WalletInterface
+    const lock = GitPaidEscrow.lock([multisigKey.toPublicKey()], 1, PrivateKey.fromRandom().toPublicKey(), binding)
+    const fundingTx = new Transaction()
+    fundingTx.addOutput({ lockingScript: lock, satoshis: 30 })
+    const invite = { type: 'invite' as const, escrowId: `${fundingTx.id('hex')}.0`,
+      beef: Utils.toHex(fundingTx.toAtomicBEEF()), satoshis: 30, threshold: 1, keyID: 'k',
+      originator: identityKey, controllers: [identityKey], pubkeys: [multisigKey.toPublicKey().toString()],
+      refundPkh: '', name: 'n', createdAt: 1, binding }
+    await expect(releaseSoloBounty(invite, otherIdentity, { wallet, feeSats: 50 }))
+      .rejects.toThrow(/too small/)
   })
 })
