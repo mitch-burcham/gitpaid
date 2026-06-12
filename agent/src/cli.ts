@@ -33,7 +33,8 @@ const WALLET_INSTALL_HINT =
   'or: cargo install --git https://github.com/Calhooon/bsv-wallet-cli.git'
 
 function makeWallet (): WalletClient {
-  return new WalletClient(new HTTPWalletJSON(undefined, WALLET_URL), 'gitpaid-agent')
+  // HTTPWalletJSON requires the originator on ITS constructor in Node
+  return new WalletClient(new HTTPWalletJSON('gitpaid-agent.local', WALLET_URL))
 }
 
 function makeClient (withWallet: boolean): GitPaidAgentClient {
@@ -79,14 +80,14 @@ program
   .description('Provision the agent wallet (bsv-wallet-cli) and verify reachability — ready-to-hunt in minutes, zero sats needed')
   .option('--no-daemon', 'skip starting the wallet daemon')
   .action(async (opts: { daemon: boolean }) => {
-    // 1. bsv-wallet binary (ADR-004)
-    const version = spawnSync('bsv-wallet', ['--version'], { encoding: 'utf8' })
-    if (version.error !== undefined) {
+    // 1. bsv-wallet binary (ADR-004). v0.2.x has no --version; probe --help.
+    const probe = spawnSync('bsv-wallet', ['--help'], { encoding: 'utf8' })
+    if (probe.error !== undefined) {
       console.error(WALLET_INSTALL_HINT)
       process.exitCode = 1
       return
     }
-    console.log(`bsv-wallet ${version.stdout.trim()}`)
+    console.log('bsv-wallet found')
 
     // 2. wallet db init (idempotent upstream) + daemon
     if (!(await walletReachable())) {
